@@ -20,7 +20,7 @@ interface Env {
   API_SECRET: string; // Shared secret for worker-to-API auth
   WORKER_PRIVATE_KEY: string; // Ed25519 private key for signing payloads
   WORKER_ENCRYPTION_PRIVATE_KEY: string; // X25519 private key for decrypting recipient emails
-  DKIM_PRIVATE_KEY?: string; // RSA private key for DKIM email signing
+  RESEND_API_KEY: string; // Resend API key for sending emails
   EDGE_CACHE: KVNamespace;
 }
 
@@ -132,7 +132,7 @@ export default {
       }
     }
     
-    // POST /send - Send email via MailChannels
+    // POST /send - Send email via Resend
     if (url.pathname === '/send' && request.method === 'POST') {
       try {
         return await handleSendEmail(request, env, corsHeaders);
@@ -431,67 +431,51 @@ async function handleSendEmail(
     // Decrypt recipient email with worker's private key (zero-knowledge!)
     const recipientEmail = decryptRecipient(body.encryptedRecipient, env.WORKER_ENCRYPTION_PRIVATE_KEY);
     
-    // Build MailChannels request with DKIM signing
-    const mailChannelsPayload: any = {
-      personalizations: [
-        {
-          to: [{ email: recipientEmail }],
-        },
-      ],
-      from: {
-        email: body.edgeAddress,
-        name: 'Relay',
-      },
+    // Build Resend API request
+    const resendPayload: any = {
+      from: `Relay <${body.edgeAddress}>`,
+      to: [recipientEmail],
       subject: body.subject,
-      content: [
-        {
-          type: 'text/plain',
-          value: body.content,
-        },
-      ],
-      headers: body.inReplyTo ? {
-        'In-Reply-To': body.inReplyTo,
-      } : undefined,
+      text: body.content,
     };
 
-    // Add DKIM signing if private key is configured
-    if (env.DKIM_PRIVATE_KEY) {
-      mailChannelsPayload.personalizations[0].dkim_domain = 'rlymsg.com';
-      mailChannelsPayload.personalizations[0].dkim_selector = 'mailchannels';
-      mailChannelsPayload.personalizations[0].dkim_private_key = env.DKIM_PRIVATE_KEY;
+    if (body.inReplyTo) {
+      resendPayload.headers = {
+        'In-Reply-To': body.inReplyTo,
+      };
     }
 
-    // Send email via MailChannels
-    const mailChannelsResponse = await fetch('https://api.mailchannels.net/tx/v1/send', {
+    // Send email via Resend
+    const resendResponse = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
+        'Authorization': `Bearer ${env.RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(mailChannelsPayload),
+      body: JSON.stringify(resendPayload),
     });
 
-    if (!mailChannelsResponse.ok) {
-      const error = await mailChannelsResponse.text();
-      throw new Error(`MailChannels error: ${mailChannelsResponse.status} - ${error}`);
+    if (!resendResponse.ok) {
+      const error = await resendResponse.text();
+      throw new Error(`Resend error: ${resendResponse.status} - ${error}`);
     }
 
-    // Consume the response body (MailChannels returns plain text "OK" on success)
-    await mailChannelsResponse.text();
+    const result = await resendResponse.json() as { id: string };
 
     // Purge decrypted recipient from memory (JS GC handles this)
     // In production, could use secure zeroing if available
     
-    console.log(`✅ Email sent via MailChannels from ${body.edgeAddress} to ${recipientEmail.substring(0, 3)}***`);
+    console.log(`✅ Email sent via Resend from ${body.edgeAddress} to ${recipientEmail.substring(0, 3)}***`);
 
     return new Response(JSON.stringify({ 
       success: true,
-      messageId: crypto.randomUUID(), // MailChannels doesn't return message ID
+      messageId: result.id, // Resend returns the email ID
     }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
-    console.error('MailChannels send error:', error);
+    console.error('Resend send error:', error);
     throw error;
   }
 }
