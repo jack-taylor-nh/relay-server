@@ -5,7 +5,7 @@
  */
 
 import { Context, Next } from 'hono';
-import { verifySessionToken } from '../lib/jwt';
+import { verifySessionToken } from '../lib/jwt.js';
 
 declare module 'hono' {
   interface ContextVariableMap {

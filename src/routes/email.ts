@@ -9,7 +9,7 @@
 import { Hono } from 'hono';
 import { eq, and } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import { db, edges, conversations, conversationParticipants, messages, emailMessages } from '../db';
+import { db, edges, conversations, conversationParticipants, messages, emailMessages } from '../db/index.js';
 
 export const emailRoutes = new Hono();
 

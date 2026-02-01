@@ -8,8 +8,8 @@
 import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import { db, identities, handles, edges } from '../db';
-import { verifyString, fromBase64, computeFingerprint, initCrypto } from '../core/crypto';
+import { db, identities, handles, edges } from '../db/index.js';
+import { verifyString, fromBase64, computeFingerprint, initCrypto } from '../core/crypto/index.js';
 
 export const identityRoutes = new Hono();
 

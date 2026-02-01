@@ -15,9 +15,9 @@ import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
-import { db, edges, identities } from '../db';
-import { verifyString, fromBase64, computeFingerprint, initCrypto } from '../core/crypto';
-import type { EdgeType, SecurityLevel } from '../db/schema';
+import { db, edges, identities } from '../db/index.js';
+import { verifyString, fromBase64, computeFingerprint, initCrypto } from '../core/crypto/index.js';
+import type { EdgeType, SecurityLevel } from '../db/schema.js';
 
 export const edgeRoutes = new Hono();
 

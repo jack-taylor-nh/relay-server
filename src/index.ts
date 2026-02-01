@@ -7,12 +7,12 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 
-import { authRoutes } from './routes/auth';
-import { identityRoutes } from './routes/identity';
-import { handleRoutes } from './routes/handles';
-import { edgeRoutes } from './routes/edges';
-import { conversationRoutes } from './routes/conversations';
-import { emailRoutes } from './routes/email';
+import { authRoutes } from './routes/auth.js';
+import { identityRoutes } from './routes/identity.js';
+import { handleRoutes } from './routes/handles.js';
+import { edgeRoutes } from './routes/edges.js';
+import { conversationRoutes } from './routes/conversations.js';
+import { emailRoutes } from './routes/email.js';
 
 const app = new Hono();
 

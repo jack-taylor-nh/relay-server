@@ -9,9 +9,9 @@
 import { Hono } from 'hono';
 import { eq, desc, and, lt, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import { db, conversations, conversationParticipants, messages, edges, type SecurityLevel } from '../db';
-import { authMiddleware } from '../middleware/auth';
-import { DEFAULT_PAGE_SIZE } from '../core/constants';
+import { db, conversations, conversationParticipants, messages, edges, type SecurityLevel } from '../db/index.js';
+import { authMiddleware } from '../middleware/auth.js';
+import { DEFAULT_PAGE_SIZE } from '../core/constants.js';
 
 export const conversationRoutes = new Hono();
 

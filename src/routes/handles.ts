@@ -8,8 +8,8 @@
 
 import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
-import { db, handles, identities } from '../db';
-import { validateHandle, normalizeHandle, verifyString, fromBase64, computeFingerprint, initCrypto } from '../core';
+import { db, handles, identities } from '../db/index.js';
+import { validateHandle, normalizeHandle, verifyString, fromBase64, computeFingerprint, initCrypto } from '../core/index.js';
 
 export const handleRoutes = new Hono();
 
