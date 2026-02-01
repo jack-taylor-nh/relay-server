@@ -19,6 +19,7 @@ interface Env {
   API_BASE_URL: string;
   API_SECRET: string; // Shared secret for worker-to-API auth
   WORKER_PRIVATE_KEY: string; // Ed25519 private key for signing payloads
+  DKIM_PRIVATE_KEY?: string; // RSA private key for DKIM email signing
   EDGE_CACHE: KVNamespace;
 }
 
@@ -379,35 +380,43 @@ async function handleSendEmail(
     // Parse encrypted recipient (for now, assuming it's the decrypted email)
     const recipientEmail = body.encryptedRecipient; // TEMP: Should decrypt
     
+    // Build MailChannels request with DKIM signing
+    const mailChannelsPayload: any = {
+      personalizations: [
+        {
+          to: [{ email: recipientEmail }],
+        },
+      ],
+      from: {
+        email: body.edgeAddress,
+        name: 'Relay',
+      },
+      subject: body.subject,
+      content: [
+        {
+          type: 'text/plain',
+          value: body.content,
+        },
+      ],
+      headers: body.inReplyTo ? {
+        'In-Reply-To': body.inReplyTo,
+      } : undefined,
+    };
+
+    // Add DKIM signing if private key is configured
+    if (env.DKIM_PRIVATE_KEY) {
+      mailChannelsPayload.personalizations[0].dkim_domain = 'rlymsg.com';
+      mailChannelsPayload.personalizations[0].dkim_selector = 'mailchannels';
+      mailChannelsPayload.personalizations[0].dkim_private_key = env.DKIM_PRIVATE_KEY;
+    }
+
     // Send email via MailChannels
     const mailChannelsResponse = await fetch('https://api.mailchannels.net/tx/v1/send', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        personalizations: [
-          {
-            to: [{ email: recipientEmail }],
-            dkim_domain: 'rlymsg.com',
-            dkim_selector: 'mailchannels',
-          },
-        ],
-        from: {
-          email: body.edgeAddress,
-          name: 'Relay',
-        },
-        subject: body.subject,
-        content: [
-          {
-            type: 'text/plain',
-            value: body.content,
-          },
-        ],
-        headers: body.inReplyTo ? {
-          'In-Reply-To': body.inReplyTo,
-        } : undefined,
-      }),
+      body: JSON.stringify(mailChannelsPayload),
     });
 
     if (!mailChannelsResponse.ok) {
