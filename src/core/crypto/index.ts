@@ -8,7 +8,7 @@
  */
 
 import sodium from 'libsodium-wrappers-sumo';
-import type { KeyPair, EncryptedKeyBundle } from '../types';
+import type { KeyPair, EncryptedKeyBundle } from '../types/index.js';
 
 let initialized = false;
 
