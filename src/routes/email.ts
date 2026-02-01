@@ -377,3 +377,68 @@ emailRoutes.post('/dispatch', authMiddleware, async (c) => {
     return c.json({ code: 'EMAIL_SEND_FAILED', message: 'Failed to send email' }, 500);
   }
 });
+/**
+ * Record sent email message (called after worker sends via MailChannels)
+ * Server stores the message in conversation history (plaintext for now)
+ */
+emailRoutes.post('/record-sent', authMiddleware, async (c) => {
+  const identityId = c.get('fingerprint');
+  
+  const body = await c.req.json<{
+    conversationId: string;
+    content: string;
+  }>();
+
+  if (!body.conversationId || !body.content) {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
+  }
+
+  // Verify user is a participant
+  const [conv] = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.id, body.conversationId))
+    .limit(1);
+
+  if (!conv) {
+    return c.json({ code: 'CONVERSATION_NOT_FOUND', message: 'Conversation not found' }, 404);
+  }
+
+  const [participation] = await db
+    .select()
+    .from(conversationParticipants)
+    .where(and(
+      eq(conversationParticipants.conversationId, body.conversationId),
+      eq(conversationParticipants.identityId, identityId)
+    ))
+    .limit(1);
+
+  if (!participation) {
+    return c.json({ code: 'FORBIDDEN', message: 'You are not a participant' }, 403);
+  }
+
+  // Store sent message in database
+  const messageId = ulid();
+  const now = new Date();
+
+  await db.insert(messages).values({
+    id: messageId,
+    protocolVersion: '1.0',
+    conversationId: body.conversationId,
+    edgeId: conv.edgeId,
+    origin: 'email',
+    securityLevel: 'gateway_secured',
+    contentType: 'text/plain',
+    senderIdentityId: identityId,
+    plaintextContent: body.content,
+    createdAt: now,
+  });
+
+  // Update conversation
+  await db
+    .update(conversations)
+    .set({ lastActivityAt: now })
+    .where(eq(conversations.id, body.conversationId));
+
+  return c.json({ messageId }, 201);
+});
