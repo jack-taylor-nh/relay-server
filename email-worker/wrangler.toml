@@ -1,0 +1,22 @@
+# Relay Email Worker
+# Cloudflare Email Workers configuration
+
+name = "relay-email-worker"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Email routing
+[[email_handlers]]
+enabled = true
+# Route all emails to @relay.sh domain
+# matches = ".*@relay.sh"
+
+# Environment variables (set via wrangler secret)
+[vars]
+API_BASE_URL = "https://api.relay.sh"
+
+# KV namespace for caching alias lookups
+[[kv_namespaces]]
+binding = "ALIAS_CACHE"
+id = "your-kv-namespace-id"
+preview_id = "your-kv-preview-id"

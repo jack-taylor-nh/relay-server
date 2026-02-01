@@ -1,0 +1,31 @@
+{
+  "name": "@relay/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.8.0",
+    "@relay/core": "file:../relay-client/core",
+    "drizzle-orm": "^0.29.3",
+    "hono": "^4.0.0",
+    "postgres": "^3.4.3",
+    "libsodium-wrappers-sumo": "^0.7.13",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "@types/libsodium-wrappers-sumo": "^0.7.8",
+    "@types/node": "^20.11.0",
+    "drizzle-kit": "^0.20.12",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
