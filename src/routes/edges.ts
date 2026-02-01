@@ -17,12 +17,21 @@ import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
 import { db, edges, identities, handles } from '../db/index.js';
 import { verifyString, fromBase64, computeFingerprint } from '../core/crypto/index.js';
+import { getAvailableEdgeTypes, getEdgeType, validateEdgeAddress } from '../core/edge-types.js';
 import type { EdgeType, SecurityLevel } from '../db/schema.js';
 
 export const edgeRoutes = new Hono();
 
 // Email domain for aliases
 const EMAIL_DOMAIN = 'rlymsg.com';
+
+/**
+ * GET /v1/edge/types - Get available edge types (dynamic client configuration)
+ */
+edgeRoutes.get('/types', async (c) => {
+  const types = getAvailableEdgeTypes();
+  return c.json({ types });
+});
 
 /**
  * Generate a random email alias
@@ -47,21 +56,38 @@ function generateContactLinkSlug(): string {
 }
 
 /**
- * Create a new edge
+ * Create a new edge (unified for all types including handles)
  */
 edgeRoutes.post('/', async (c) => {
   const body = await c.req.json<{
     type: EdgeType;
     publicKey: string;
-    x25519PublicKey: string;  // For email encryption
+    x25519PublicKey: string;
     nonce: string;
     signature: string;
     label?: string;
-    customAddress?: string; // For custom contact link slugs
+    customAddress?: string; // For handles/contact links
+    displayName?: string;   // For handles
   }>();
 
   if (!body.type || !body.publicKey || !body.nonce || !body.signature) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
+  }
+
+  // Check if edge type exists and is enabled
+  const edgeType = getEdgeType(body.type);
+  if (!edgeType || !edgeType.enabled) {
+    return c.json({ code: 'INVALID_EDGE_TYPE', message: `Edge type '${body.type}' not available` }, 400);
+  }
+
+  // Validate custom address if required
+  if (edgeType.requiresCustomAddress) {
+    if (!body.customAddress) {
+      return c.json({ code: 'VALIDATION_ERROR', message: `Custom address required for ${edgeType.name}` }, 400);
+    }
+    if (!validateEdgeAddress(body.type, body.customAddress)) {
+      return c.json({ code: 'VALIDATION_ERROR', message: `Invalid address format for ${edgeType.name}` }, 400);
+    }
   }
 
   // Verify signature
@@ -86,44 +112,61 @@ edgeRoutes.post('/', async (c) => {
     return c.json({ code: 'IDENTITY_NOT_FOUND', message: 'Identity not registered' }, 404);
   }
 
-  // Generate address based on type
+  // Generate address and metadata based on type
   let address: string;
-  let securityLevel: SecurityLevel;
+  let metadata: any = {};
 
   switch (body.type) {
+    case 'native': {
+      // Handle (native edge)
+      if (!body.customAddress) {
+        return c.json({ code: 'VALIDATION_ERROR', message: 'Handle name required' }, 400);
+      }
+
+      const handleName = body.customAddress.toLowerCase();
+      
+      // Check if handle already exists
+      const existingHandle = await db
+        .select()
+        .from(edges)
+        .where(eq(edges.address, handleName))
+        .limit(1);
+
+      if (existingHandle.length > 0) {
+        return c.json({ code: 'HANDLE_TAKEN', message: 'Handle already taken' }, 409);
+      }
+
+      address = handleName;
+      metadata = {
+        handle: handleName,
+        displayName: body.displayName || null,
+      };
+
+      // For backwards compatibility, also create entry in handles table
+      const handleId = crypto.randomUUID();
+      await db.insert(handles).values({
+        id: handleId,
+        identityId,
+        handle: handleName,
+        displayName: body.displayName || null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      break;
+    }
+
     case 'email':
       address = generateEmailAlias();
-      securityLevel = 'gateway_secured';
       break;
+
     case 'contact_link':
       address = body.customAddress || generateContactLinkSlug();
-      securityLevel = 'gateway_secured'; // Upgradeable if visitor uses Relay
       break;
-    case 'native':
-      // Native edges use identity ID as address
-      address = identityId;
-      securityLevel = 'e2ee';
-      break;
+
     default:
       // Future bridges
-      address = `${body.type}:${ulid()}`;
-      securityLevel = 'gateway_secured';
-  }
-
-  // Check for address collision
-  const existing = await db
-    .select()
-    .from(edges)
-    .where(eq(edges.address, address))
-    .limit(1);
-
-  if (existing.length > 0) {
-    // Retry with new address for email/contact_link
-    if (body.type === 'email' || body.type === 'contact_link') {
-      address = body.type === 'email' ? generateEmailAlias() : generateContactLinkSlug();
-    } else {
-      return c.json({ code: 'ADDRESS_TAKEN', message: 'Address already in use' }, 409);
-    }
+      address = body.customAddress || `${body.type}:${ulid()}`;
   }
 
   const edgeId = ulid();
@@ -133,21 +176,25 @@ edgeRoutes.post('/', async (c) => {
     id: edgeId,
     identityId,
     type: body.type,
+    bridgeType: body.type,
+    isNative: body.type === 'native',
     address,
     label: body.label,
     status: 'active',
-    securityLevel,
+    securityLevel: edgeType.securityLevel,
     x25519PublicKey: body.x25519PublicKey || null,
+    metadata,
     createdAt: now,
   });
 
   return c.json({
     id: edgeId,
     type: body.type,
-    address,
+    address: body.type === 'native' ? `@${address}` : address,
     label: body.label,
     status: 'active',
-    securityLevel,
+    securityLevel: edgeType.securityLevel,
+    metadata,
     createdAt: now.toISOString(),
   }, 201);
 });
@@ -183,11 +230,12 @@ edgeRoutes.get('/', async (c) => {
     edges: userEdges.map(edge => ({
       id: edge.id,
       type: edge.type,
-      address: edge.address,
+      address: edge.isNative ? `@${edge.address}` : edge.address,
       label: edge.label,
       status: edge.status,
       securityLevel: edge.securityLevel,
       messageCount: edge.messageCount,
+      metadata: edge.metadata, // Includes handle/displayName for native edges
       createdAt: edge.createdAt.toISOString(),
       lastActivityAt: edge.lastActivityAt?.toISOString() || null,
     })),
@@ -347,23 +395,24 @@ edgeRoutes.post('/:id/burn', async (c) => {
     return c.json({ code: 'ALREADY_BURNED', message: 'Edge is already burned' }, 400);
   }
 
-  // Burn the edge: NULL identity/handle references, set status to burned
+  // Burn the edge: NULL identity reference, set status to burned
+  // Metadata (handle name, etc.) stays to prevent collision but becomes anonymous
   await db
     .update(edges)
     .set({
-      identityId: null,  // Unlink from identity (untraceable)
-      handleId: null,    // Unlink from handle (untraceable)
+      identityId: sql`NULL`,  // Unlink from identity (untraceable)
+      handleId: sql`NULL`,    // Unlink from handle (backwards compat)
       status: 'burned',
       disabledAt: new Date(),
     })
     .where(eq(edges.id, edgeId));
 
-  // If this is a native edge with an associated handle, also NULL the handle's identityId
-  if (edge.isNative && edge.handleId) {
+  // For backwards compatibility: if this edge has a handleId, also NULL the handle's identityId
+  if (edge.handleId) {
     await db
       .update(handles)
       .set({
-        identityId: sql`NULL`,  // Unlink handle from identity (untraceable)
+        identityId: sql`NULL`,
       })
       .where(eq(handles.id, edge.handleId));
   }
