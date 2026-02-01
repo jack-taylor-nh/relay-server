@@ -7,7 +7,7 @@
  * - XChaCha20-Poly1305 for symmetric encryption
  */
 
-import sodium from 'libsodium-wrappers-sumo';
+import sodium from 'libsodium-wrappers';
 import type { KeyPair, EncryptedKeyBundle } from '../types/index.js';
 
 let initialized = false;
