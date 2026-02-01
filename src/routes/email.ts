@@ -21,6 +21,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Simple worker auth - shared secret
 const WORKER_SECRET = process.env.WORKER_SECRET || 'dev-worker-secret';
+const WORKER_PUBLIC_KEY = process.env.WORKER_PUBLIC_KEY; // Ed25519 public key (hex) for signature verification
 
 /**
  * Middleware to verify worker auth
@@ -37,14 +38,59 @@ async function workerAuthMiddleware(c: any, next: any) {
     return c.json({ code: 'UNAUTHORIZED', message: 'Invalid worker secret' }, 401);
   }
   
+  // Verify signature if provided (optional for backwards compatibility)
+  const signature = c.req.header('X-Worker-Signature');
+  if (signature && WORKER_PUBLIC_KEY) {
+    const body = await c.req.json();
+    c.set('parsedBody', body); // Cache parsed body for later use
+    
+    const messageToSign = `${body.edgeId}:${body.senderHash}:${body.encryptedPayload}:${body.receivedAt}`;
+    const isValid = verifySignature(messageToSign, signature, WORKER_PUBLIC_KEY);
+    
+    if (!isValid) {
+      return c.json({ code: 'INVALID_SIGNATURE', message: 'Worker signature verification failed' }, 401);
+    }
+  }
+  
   await next();
+}
+
+/**
+ * Verify Ed25519 signature
+ */
+function verifySignature(message: string, signatureBase64: string, publicKeyHex: string): boolean {
+  try {
+    const nacl = require('tweetnacl');
+    const { decodeBase64 } = require('tweetnacl-util');
+    
+    const messageBytes = new TextEncoder().encode(message);
+    const signatureBytes = decodeBase64(signatureBase64);
+    const publicKeyBytes = hexToBytes(publicKeyHex);
+    
+    return nacl.sign.detached.verify(messageBytes, signatureBytes, publicKeyBytes);
+  } catch (error) {
+    console.error('Signature verification error:', error);
+    return false;
+  }
+}
+
+/**
+ * Convert hex string to Uint8Array
+ */
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+  }
+  return bytes;
 }
 
 /**
  * Process inbound email from worker
  */
 emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
-  const body = await c.req.json<{
+  // Get body (already parsed in middleware if signature was verified)
+  const body = c.get('parsedBody') || await c.req.json<{
     edgeId: string;
     identityId: string;
     senderHash: string;          // Hash for conversation matching

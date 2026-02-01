@@ -18,6 +18,7 @@ import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
 interface Env {
   API_BASE_URL: string;
   API_SECRET: string; // Shared secret for worker-to-API auth
+  WORKER_PRIVATE_KEY: string; // Ed25519 private key for signing payloads
   EDGE_CACHE: KVNamespace;
 }
 
@@ -43,6 +44,7 @@ interface EncryptedEmailPackage {
   senderHash: string;           // For conversation matching
   encryptedPayload: string;     // Entire email encrypted
   timestamp: string;
+  workerSignature?: string;     // Ed25519 signature over payload
 }
 
 interface EmailMessage {
@@ -269,19 +271,29 @@ async function forwardToApi(
   // Encrypt entire email payload with recipient's public key (zero-knowledge)
   const encryptedPayload = encryptEmailPayload(email, edgeInfo.publicKey);
   
+  const timestamp = new Date().toISOString();
+  
   const payload = {
     edgeId: edgeInfo.id,
     identityId: edgeInfo.identityId,
     senderHash,                     // Deterministic hash for matching
     encryptedPayload,               // Full email encrypted (server can't read)
-    receivedAt: new Date().toISOString(),
+    receivedAt: timestamp,
   };
+  
+  // Sign payload to prevent injection attacks
+  let workerSignature: string | undefined;
+  if (env.WORKER_PRIVATE_KEY) {
+    const messageToSign = `${edgeInfo.id}:${senderHash}:${encryptedPayload}:${timestamp}`;
+    workerSignature = await signPayload(messageToSign, env.WORKER_PRIVATE_KEY);
+  }
   
   const response = await fetch(`${env.API_BASE_URL}/v1/email/inbound`, {
     method: 'POST',
     headers: {
       'Authorization': `Worker ${env.API_SECRET}`,
       'Content-Type': 'application/json',
+      'X-Worker-Signature': workerSignature || '',
     },
     body: JSON.stringify(payload),
   });
@@ -291,6 +303,33 @@ async function forwardToApi(
     throw new Error(`API forward error: ${response.status} - ${error}`);
   }
 }
+
+/**
+ * Sign payload with worker's private key (Ed25519)
+ */
+async function signPayload(message: string, privateKeyHex: string): Promise<string> {
+  try {
+    const privateKeyBytes = hexToBytes(privateKeyHex);
+    const messageBytes = new TextEncoder().encode(message);
+    const signature = nacl.sign.detached(messageBytes, privateKeyBytes);
+    return encodeBase64(signature);
+  } catch (error) {
+    console.error('Signature error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Convert hex string to Uint8Array
+ */
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+  }
+  return bytes;
+}
+
 /**
  * Handle sending email via MailChannels (zero-knowledge)
  * 
