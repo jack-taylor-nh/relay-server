@@ -8,8 +8,8 @@
 import { Hono } from 'hono';
 import { eq, and, gt } from 'drizzle-orm';
 import { db, authNonces, identities } from '../db';
-import { generateNonce as generateCryptoNonce, verifyString, fromBase64, computeFingerprint } from '@relay/core';
-import { NONCE_TTL_SECONDS, SESSION_TOKEN_TTL_SECONDS } from '@relay/core';
+import { generateNonce as generateCryptoNonce, verifyString, fromBase64, computeFingerprint } from '../core/crypto';
+import { NONCE_TTL_SECONDS, SESSION_TOKEN_TTL_SECONDS } from '../core/constants';
 import { signSessionToken } from '../lib/jwt';
 
 export const authRoutes = new Hono();

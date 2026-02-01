@@ -7,7 +7,6 @@
  * - XChaCha20-Poly1305 for symmetric encryption
  */
 
-// @ts-expect-error - libsodium-wrappers-sumo lacks complete type definitions
 import sodium from 'libsodium-wrappers-sumo';
 import type { KeyPair, EncryptedKeyBundle } from '../types';
 

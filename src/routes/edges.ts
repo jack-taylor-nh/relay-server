@@ -16,7 +16,7 @@ import { eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
 import { db, edges, identities } from '../db';
-import { verifyString, fromBase64, computeFingerprint, initCrypto } from '@relay/core';
+import { verifyString, fromBase64, computeFingerprint, initCrypto } from '../core/crypto';
 import type { EdgeType, SecurityLevel } from '../db/schema';
 
 export const edgeRoutes = new Hono();

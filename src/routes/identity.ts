@@ -9,7 +9,7 @@ import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { db, identities, handles, edges } from '../db';
-import { verifyString, fromBase64, computeFingerprint, initCrypto } from '@relay/core';
+import { verifyString, fromBase64, computeFingerprint, initCrypto } from '../core/crypto';
 
 export const identityRoutes = new Hono();
 

@@ -11,7 +11,7 @@ import { eq, desc, and, lt, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { db, conversations, conversationParticipants, messages, edges, type SecurityLevel } from '../db';
 import { authMiddleware } from '../middleware/auth';
-import { DEFAULT_PAGE_SIZE } from '@relay/core';
+import { DEFAULT_PAGE_SIZE } from '../core/constants';
 
 export const conversationRoutes = new Hono();
 
