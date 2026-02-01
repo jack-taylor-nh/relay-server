@@ -424,6 +424,9 @@ async function handleSendEmail(
       throw new Error(`MailChannels error: ${mailChannelsResponse.status} - ${error}`);
     }
 
+    // Consume the response body (MailChannels returns plain text "OK" on success)
+    await mailChannelsResponse.text();
+
     // Purge decrypted recipient from memory (JS GC handles this)
     // In production, could use secure zeroing if available
     
