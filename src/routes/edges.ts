@@ -294,7 +294,7 @@ edgeRoutes.delete('/:id', async (c) => {
  * - Keeping address record (prevents reuse/collision)
  * - Conversations remain but can't be traced back to identity
  */
-edgeRoutes.delete('/:id', async (c) => {
+edgeRoutes.post('/:id/burn', async (c) => {
   const edgeId = c.req.param('id');
 
   const body = await c.req.json<{
