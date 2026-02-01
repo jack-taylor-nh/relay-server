@@ -7,10 +7,13 @@
  * Flow:
  * 1. Receive email at xyz123@rlymsg.com
  * 2. Look up edge by address to verify it exists and is active
- * 3. Forward email content to API for storage as a gateway-secured message
+ * 3. Encrypt sender email with recipient's public key (zero-knowledge)
+ * 4. Forward email content to API for storage as a gateway-secured message
  */
 
 import PostalMime from 'postal-mime';
+import * as nacl from 'tweetnacl';
+import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
 
 interface Env {
   API_BASE_URL: string;
@@ -164,6 +167,46 @@ async function hashEmail(email: string): Promise<string> {
 }
 
 /**
+ * Encrypt email address with recipient's public key (sealed box)
+ * Only the recipient (identity owner) can decrypt
+ */
+function encryptEmail(email: string, publicKeyBase64: string): string {
+  try {
+    // Decode recipient's public key
+    const recipientPublicKey = decodeBase64(publicKeyBase64);
+    
+    // Generate ephemeral keypair for encryption
+    const ephemeralKeyPair = nacl.box.keyPair();
+    
+    // Encode email as bytes
+    const messageBytes = new TextEncoder().encode(email);
+    
+    // Generate nonce
+    const nonce = nacl.randomBytes(nacl.box.nonceLength);
+    
+    // Encrypt with box (authenticated encryption)
+    const encrypted = nacl.box(
+      messageBytes,
+      nonce,
+      recipientPublicKey,
+      ephemeralKeyPair.secretKey
+    );
+    
+    // Package as: ephemeralPublicKey:nonce:ciphertext (all base64)
+    const pkg = {
+      ephemeralPubkey: encodeBase64(ephemeralKeyPair.publicKey),
+      nonce: encodeBase64(nonce),
+      ciphertext: encodeBase64(encrypted),
+    };
+    
+    return JSON.stringify(pkg);
+  } catch (error) {
+    console.error('Encryption error:', error);
+    throw error;
+  }
+}
+
+/**
  * Forward email to API for storage
  */
 async function forwardToApi(
@@ -172,14 +215,14 @@ async function forwardToApi(
   email: ParsedEmail,
   env: Env
 ): Promise<void> {
-  // Hash the sender's email for privacy
-  const fromAddressHash = await hashEmail(email.from);
+  // Encrypt sender email with recipient's public key (zero-knowledge)
+  const encryptedEmail = encryptEmail(email.from, edgeInfo.publicKey);
   
   const payload = {
     edgeId: edgeInfo.id,
     identityId: edgeInfo.identityId,
     email: {
-      fromAddressHash,
+      encryptedFrom: encryptedEmail,  // Encrypted email (only recipient can decrypt)
       fromName: email.fromName,
       subject: email.subject,
       textBody: email.textBody,

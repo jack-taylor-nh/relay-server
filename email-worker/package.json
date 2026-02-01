@@ -8,7 +8,9 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
-    "postal-mime": "^2.2.0"
+    "postal-mime": "^2.2.0",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
