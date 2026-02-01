@@ -9,16 +9,18 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:push": "node ./node_modules/drizzle-kit/bin.cjs push",
+    "db:migrate": "tsx src/db/migrate.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@hono/node-server": "^1.8.0",
     "@relay/core": "file:../relay-client/core",
+    "dotenv": "^17.2.3",
     "drizzle-orm": "^0.29.3",
     "hono": "^4.0.0",
-    "postgres": "^3.4.3",
     "libsodium-wrappers-sumo": "^0.7.13",
+    "postgres": "^3.4.3",
     "ulid": "^2.3.0"
   },
   "devDependencies": {
