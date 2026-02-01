@@ -311,7 +311,9 @@ async function forwardToApi(
   let workerSignature: string | undefined;
   if (env.WORKER_PRIVATE_KEY) {
     const messageToSign = `${edgeInfo.id}:${senderHash}:${encryptedPayload}:${timestamp}`;
+    console.log('[SIGNATURE DEBUG] Message to sign:', messageToSign.substring(0, 100) + '...');
     workerSignature = await signPayload(messageToSign, env.WORKER_PRIVATE_KEY);
+    console.log('[SIGNATURE DEBUG] Generated signature:', workerSignature.substring(0, 20) + '...');
   }
   
   const response = await fetch(`${env.API_BASE_URL}/v1/email/inbound`, {
