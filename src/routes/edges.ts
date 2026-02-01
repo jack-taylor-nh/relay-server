@@ -15,14 +15,28 @@ import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
+import nacl from 'tweetnacl';
 import { db, edges, identities } from '../db/index.js';
-import { verifyString, fromBase64, computeFingerprint } from '../core/crypto/index.js';
+import { verifyString, fromBase64, computeFingerprint, toBase64 } from '../core/crypto/index.js';
 import type { EdgeType, SecurityLevel } from '../db/schema.js';
 
 export const edgeRoutes = new Hono();
 
 // Email domain for aliases
 const EMAIL_DOMAIN = 'rlymsg.com';
+
+/**
+ * Convert Ed25519 signing public key to X25519 encryption public key
+ * This is needed for email encryption - we derive the X25519 key from the Ed25519 signing key
+ */
+function ed25519PublicKeyToX25519(ed25519PublicKey: Uint8Array): Uint8Array {
+  // For Ed25519->X25519 conversion, we hash the public key to get the seed
+  // then derive a box keypair from it. This matches the client-side derivation.
+  const hash = nacl.hash(ed25519PublicKey);
+  const seed = hash.slice(0, 32);
+  const x25519KeyPair = nacl.box.keyPair.fromSecretKey(seed);
+  return x25519KeyPair.publicKey;
+}
 
 /**
  * Generate a random email alias
@@ -220,12 +234,16 @@ edgeRoutes.get('/lookup/:address', async (c) => {
     return c.json({ code: 'EDGE_DISABLED', message: 'Edge is disabled' }, 410);
   }
 
+  // Convert Ed25519 signing public key to X25519 encryption public key
+  const ed25519PublicKey = fromBase64(edge.publicKey);
+  const x25519PublicKey = ed25519PublicKeyToX25519(ed25519PublicKey);
+
   return c.json({
     id: edge.id,
     identityId: edge.identityId,
     type: edge.type,
     securityLevel: edge.securityLevel,
-    publicKey: edge.publicKey,
+    publicKey: toBase64(x25519PublicKey),  // Return X25519 key for encryption
   });
 });
 

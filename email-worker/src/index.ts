@@ -172,7 +172,7 @@ async function hashEmail(email: string): Promise<string> {
  */
 function encryptEmail(email: string, publicKeyBase64: string): string {
   try {
-    // Decode recipient's public key
+    // Decode recipient's X25519 encryption public key (converted from Ed25519 by API)
     const recipientPublicKey = decodeBase64(publicKeyBase64);
     
     // Generate ephemeral keypair for encryption
