@@ -39,6 +39,12 @@ interface ParsedEmail {
   inReplyTo?: string;
 }
 
+interface EncryptedEmailPackage {
+  senderHash: string;           // For conversation matching
+  encryptedPayload: string;     // Entire email encrypted
+  timestamp: string;
+}
+
 interface EmailMessage {
   from: string;
   to: string;
@@ -156,7 +162,7 @@ async function parseEmail(message: EmailMessage): Promise<ParsedEmail> {
 }
 
 /**
- * Hash an email address for privacy (we don't store raw emails)
+ * Hash an email address for privacy (deterministic for conversation matching)
  */
 async function hashEmail(email: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -167,10 +173,10 @@ async function hashEmail(email: string): Promise<string> {
 }
 
 /**
- * Encrypt email address with recipient's public key (sealed box)
+ * Encrypt entire email payload with recipient's public key (zero-knowledge)
  * Only the recipient (identity owner) can decrypt
  */
-function encryptEmail(email: string, publicKeyBase64: string): string {
+function encryptEmailPayload(email: ParsedEmail, publicKeyBase64: string): string {
   try {
     // Decode recipient's X25519 encryption public key (converted from Ed25519 by API)
     const recipientPublicKey = decodeBase64(publicKeyBase64);
@@ -178,8 +184,17 @@ function encryptEmail(email: string, publicKeyBase64: string): string {
     // Generate ephemeral keypair for encryption
     const ephemeralKeyPair = nacl.box.keyPair();
     
-    // Encode email as bytes
-    const messageBytes = new TextEncoder().encode(email);
+    // Serialize entire email as JSON
+    const emailJson = JSON.stringify({
+      from: email.from,
+      fromName: email.fromName,
+      subject: email.subject,
+      textBody: email.textBody,
+      htmlBody: email.htmlBody,
+      messageId: email.messageId,
+      inReplyTo: email.inReplyTo,
+    });
+    const messageBytes = new TextEncoder().encode(emailJson);
     
     // Generate nonce
     const nonce = nacl.randomBytes(nacl.box.nonceLength);
@@ -215,21 +230,18 @@ async function forwardToApi(
   email: ParsedEmail,
   env: Env
 ): Promise<void> {
-  // Encrypt sender email with recipient's public key (zero-knowledge)
-  const encryptedEmail = encryptEmail(email.from, edgeInfo.publicKey);
+  // Hash sender email BEFORE encryption (for deterministic conversation matching)
+  const senderHash = await hashEmail(email.from);
+  
+  // Encrypt entire email payload with recipient's public key (zero-knowledge)
+  const encryptedPayload = encryptEmailPayload(email, edgeInfo.publicKey);
   
   const payload = {
     edgeId: edgeInfo.id,
     identityId: edgeInfo.identityId,
-    email: {
-      encryptedFrom: encryptedEmail,  // Encrypted email (only recipient can decrypt)
-      fromName: email.fromName,
-      subject: email.subject,
-      textBody: email.textBody,
-      messageId: email.messageId,
-      inReplyTo: email.inReplyTo,
-      receivedAt: new Date().toISOString(),
-    },
+    senderHash,                     // Deterministic hash for matching
+    encryptedPayload,               // Full email encrypted (server can't read)
+    receivedAt: new Date().toISOString(),
   };
   
   const response = await fetch(`${env.API_BASE_URL}/v1/email/inbound`, {

@@ -41,40 +41,20 @@ async function workerAuthMiddleware(c: any, next: any) {
 }
 
 /**
- * Hash email address for privacy-preserving lookups
- */
-async function hashEmail(email: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(email.toLowerCase().trim());
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
  * Process inbound email from worker
  */
 emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
   const body = await c.req.json<{
     edgeId: string;
     identityId: string;
-    email: {
-      encryptedFrom: string;  // Encrypted with recipient's public key
-      fromName?: string;
-      subject: string;
-      textBody: string;
-      messageId?: string;
-      inReplyTo?: string;
-      receivedAt: string;
-    };
+    senderHash: string;          // Hash for conversation matching
+    encryptedPayload: string;    // Entire email encrypted (zero-knowledge)
+    receivedAt: string;
   }>();
 
-  if (!body.edgeId || !body.identityId || !body.email) {
+  if (!body.edgeId || !body.identityId || !body.senderHash || !body.encryptedPayload) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
   }
-
-  // Hash encrypted email for lookup (we can still find conversations by sender)
-  const fromHash = await hashEmail(body.email.encryptedFrom);
 
   // Verify edge exists and is active
   const [edge] = await db
@@ -96,15 +76,14 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
   }
 
   // Look for existing conversation with this sender through this edge
-  // We hash the encrypted email to match conversations (privacy-preserving)
+  // Match by: edge_id + senderHash (deterministic per sender)
   const existingConv = await db
     .select({ conversationId: conversationParticipants.conversationId })
     .from(conversationParticipants)
     .innerJoin(conversations, eq(conversations.id, conversationParticipants.conversationId))
     .where(and(
       eq(conversations.edgeId, body.edgeId),
-      // Match by hashing the encrypted email (deterministic for same sender)
-      eq(conversationParticipants.externalId, body.email.encryptedFrom)
+      eq(conversationParticipants.externalId, body.senderHash)  // Match by hash
     ))
     .limit(1);
 
@@ -135,15 +114,15 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
       isOwner: true,
     });
 
-    // Add sender as external participant - store ENCRYPTED email for replies
+    // Add sender as external participant - store HASH (for matching) not encrypted blob
     await db.insert(conversationParticipants).values({
       conversationId,
-      externalId: body.email.encryptedFrom,  // Zero-knowledge: server cannot decrypt
-      displayName: body.email.fromName,
+      externalId: body.senderHash,  // Deterministic hash
+      displayName: null,             // Name is in encrypted payload
     });
   }
 
-  // Create message
+  // Create message with encrypted payload (zero-knowledge)
   const messageId = ulid();
   const now = new Date();
 
@@ -154,19 +133,20 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
     edgeId: body.edgeId,
     origin: 'email',
     securityLevel: 'gateway_secured',
-    contentType: 'text/plain',
-    senderExternalId: fromHash,  // Hash of encrypted email for indexing
-    plaintextContent: body.email.textBody,
+    contentType: 'application/encrypted',
+    senderExternalId: body.senderHash,
+    encryptedContent: body.encryptedPayload,  // Store encrypted blob
+    nonce: null,                               // Nonce is in the encrypted package
     createdAt: now,
   });
 
-  // Store email-specific metadata
+  // Store email-specific metadata (minimal, for threading)
   await db.insert(emailMessages).values({
     messageId,
-    fromAddressHash: fromHash,  // Hash for privacy-preserving lookups
-    subject: body.email.subject,
-    emailMessageId: body.email.messageId,
-    inReplyTo: body.email.inReplyTo,
+    fromAddressHash: body.senderHash,
+    subject: null,        // Subject is encrypted
+    emailMessageId: null, // MessageId is encrypted
+    inReplyTo: null,      // InReplyTo is encrypted
   });
 
   // Update conversation last activity

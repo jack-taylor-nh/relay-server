@@ -182,12 +182,14 @@ conversationRoutes.get('/:id/messages', async (c) => {
       contentType: msg.contentType,
       senderIdentityId: msg.senderIdentityId,
       senderExternalId: msg.senderExternalId,
-      // E2EE fields
+      // E2EE fields (native Relay-to-Relay)
       ciphertext: msg.ciphertext,
       ephemeralPubkey: msg.ephemeralPubkey,
       nonce: msg.nonce,
       signature: msg.signature,
-      // Gateway secured field
+      // Zero-knowledge encrypted payload (from worker)
+      encryptedContent: msg.encryptedContent,
+      // Gateway secured field (DEPRECATED)
       plaintextContent: msg.plaintextContent,
       createdAt: msg.createdAt.toISOString(),
     })),

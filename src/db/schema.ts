@@ -200,7 +200,7 @@ export const messages = pgTable('messages', {
   origin: text('origin').$type<EdgeType>(),
   /** Security level for this specific message */
   securityLevel: text('security_level').notNull().$type<SecurityLevel>().default('e2ee'),
-  /** Content type (MIME-like, e.g., "text/plain", "text/markdown") */
+  /** Content type (MIME-like, e.g., "text/plain", "text/markdown", "application/encrypted") */
   contentType: text('content_type').notNull().default('text/plain'),
   /** Sender: identity ID for Relay users */
   senderIdentityId: text('sender_identity_id').references(() => identities.id),
@@ -212,7 +212,9 @@ export const messages = pgTable('messages', {
   ephemeralPubkey: text('ephemeral_pubkey'),
   /** Nonce used for encryption (base64) */
   nonce: text('nonce'),
-  /** For gateway_secured: plaintext content (server-readable) */
+  /** For gateway_secured: encrypted package from worker (zero-knowledge) */
+  encryptedContent: text('encrypted_content'),
+  /** For gateway_secured: plaintext content (server-readable) - DEPRECATED */
   plaintextContent: text('plaintext_content'),
   /** Signature over message envelope (base64) - for e2ee */
   signature: text('signature'),
