@@ -326,9 +326,11 @@ emailRoutes.post('/send', authMiddleware, async (c) => {
   const originalSubject = originalMessages[0]?.subject || '(no subject)';
   const replySubject = originalSubject.startsWith('Re:') ? originalSubject : `Re: ${originalSubject}`;
 
-  // Return encrypted email to client for decryption
+  // Client must decrypt the first message in conversation to get sender's email
+  // The encrypted payload contains: { from, fromName, subject, textBody, ... }
   return c.json({
-    encryptedRecipient: participant.externalId,
+    // Note: Client must extract recipient email from first message's encrypted payload
+    requiresMessageDecryption: true,
     edgeAddress: edge.address,
     replySubject,
     inReplyTo: originalMessages[0]?.emailMessageId,
