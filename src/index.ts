@@ -12,6 +12,7 @@ import { identityRoutes } from './routes/identity.js';
 import { handleRoutes } from './routes/handles.js';
 import { edgeRoutes } from './routes/edges.js';
 import { conversationRoutes } from './routes/conversations.js';
+import { messageRoutes } from './routes/messages.js';
 import { emailRoutes } from './routes/email.js';
 
 const app = new Hono();
@@ -52,6 +53,7 @@ api.route('/handles', handleRoutes);
 api.route('/edge', edgeRoutes);
 api.route('/edges', edgeRoutes); // Alias for list
 api.route('/conversations', conversationRoutes);
+api.route('/messages', messageRoutes);
 api.route('/email', emailRoutes);
 
 app.route('/v1', api);
