@@ -51,6 +51,9 @@ async function workerAuthMiddleware(c: any, next: any) {
     if (!isValid) {
       return c.json({ code: 'INVALID_SIGNATURE', message: 'Worker signature verification failed' }, 401);
     }
+    
+    // Store parsed body for route handler
+    c.set('workerBody', body);
   }
   
   await next();
@@ -90,7 +93,8 @@ function hexToBytes(hex: string): Uint8Array {
  * Process inbound email from worker
  */
 emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
-  const body = await c.req.json<{
+  // Get body from middleware if signature was verified, otherwise parse fresh
+  const body = c.get('workerBody') || await c.req.json<{
     edgeId: string;
     identityId: string;
     senderHash: string;          // Hash for conversation matching
