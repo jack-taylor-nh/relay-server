@@ -8,7 +8,7 @@
  */
 
 import { Hono } from 'hono';
-import { eq, and, not } from 'drizzle-orm';
+import { eq, and, not, isNull, or } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { Resend } from 'resend';
 import { db, edges, conversations, conversationParticipants, messages, emailMessages } from '../db/index.js';
@@ -255,12 +255,16 @@ emailRoutes.post('/send', authMiddleware, async (c) => {
   }
 
   // Get recipient info (contains encrypted email address)
+  // For email conversations, the external participant has NULL identityId
   const [participant] = await db
     .select()
     .from(conversationParticipants)
     .where(and(
       eq(conversationParticipants.conversationId, body.conversationId),
-      not(eq(conversationParticipants.identityId, identityId))  // Get the OTHER participant
+      or(
+        not(eq(conversationParticipants.identityId, identityId)),
+        isNull(conversationParticipants.identityId)
+      )
     ))
     .limit(1);
 
