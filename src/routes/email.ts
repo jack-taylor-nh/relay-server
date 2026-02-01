@@ -12,9 +12,11 @@ import { eq, and, not, isNull, or } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { Resend } from 'resend';
 import nacl from 'tweetnacl';
-import { decodeBase64 } from 'tweetnacl-util';
+import naclUtil from 'tweetnacl-util';
 import { db, edges, conversations, conversationParticipants, messages, emailMessages } from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
+
+const { decodeBase64 } = naclUtil;
 
 export const emailRoutes = new Hono();
 
