@@ -48,7 +48,7 @@ const api = new Hono();
 
 api.route('/auth', authRoutes);
 api.route('/identity', identityRoutes);
-api.route('/handle', handleRoutes);
+api.route('/handles', handleRoutes);
 api.route('/edge', edgeRoutes);
 api.route('/edges', edgeRoutes); // Alias for list
 api.route('/conversations', conversationRoutes);

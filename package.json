@@ -16,7 +16,6 @@
   "dependencies": {
     "@hono/node-server": "^1.8.0",
     "dotenv": "^17.2.3",
-    "drizzle-orm": "^0.29.3",
     "hono": "^4.0.0",
     "postgres": "^3.4.3",
     "resend": "^6.9.1",
@@ -27,6 +26,7 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "drizzle-kit": "^0.31.8",
+    "drizzle-orm": "^0.45.1",
     "tsx": "^4.19.2",
     "typescript": "^5.3.3"
   }

@@ -32,24 +32,25 @@ export const identities = pgTable('identities', {
 });
 
 // ============================================
-// Handles (Optional, Multiple per Identity)
+// Handles (User-Facing Persistent Identity)
 // ============================================
 
 export const handles = pgTable('handles', {
-  /** Handle string (without & prefix, lowercase) */
-  name: text('name').primaryKey(),
+  /** Unique handle ID (UUID) */
+  id: text('id').primaryKey(),
   /** Owner identity ID (fingerprint) */
-  identityId: text('identity_id').references(() => identities.id).notNull(),
-  /** Whether this is the primary/default handle */
-  isPrimary: boolean('is_primary').default(false).notNull(),
-  /** Handle status */
-  status: text('status').notNull().$type<'active' | 'disabled' | 'reserved'>().default('active'),
-  /** When handle was claimed */
-  claimedAt: timestamp('claimed_at', { withTimezone: true }).defaultNow().notNull(),
-  /** When handle was disabled (if applicable) */
-  disabledAt: timestamp('disabled_at', { withTimezone: true }),
+  identityId: text('identity_id').references(() => identities.id, { onDelete: 'cascade' }).notNull(),
+  /** Handle string (without @ prefix, e.g., 'alice') */
+  handle: text('handle').notNull().unique(),
+  /** Optional display name */
+  displayName: text('display_name'),
+  /** When handle was created */
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  /** When handle was last updated */
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   identityIdx: index('handles_identity_idx').on(table.identityId),
+  handleIdx: index('handles_handle_idx').on(table.handle),
 }));
 
 // ============================================
@@ -89,6 +90,14 @@ export const edges = pgTable('edges', {
   id: text('id').primaryKey(),
   /** Owner identity ID */
   identityId: text('identity_id').references(() => identities.id).notNull(),
+  /** Handle this edge belongs to (NEW - replaces direct identity link) */
+  handleId: text('handle_id').references(() => handles.id, { onDelete: 'cascade' }),
+  /** Bridge type: email, native, discord, telegram, sms, etc. (NEW) */
+  bridgeType: text('bridge_type').notNull().default('email'),
+  /** True for native Relay-to-Relay edges (NEW) */
+  isNative: boolean('is_native').default(false).notNull(),
+  /** Bridge-specific metadata (credentials, config) as encrypted JSON (NEW) */
+  metadata: jsonb('metadata').default({}).notNull(),
   /** Edge type */
   type: text('type').notNull().$type<EdgeType>(),
   /** Address/identifier (email address, link slug, platform ID) */
@@ -115,8 +124,11 @@ export const edges = pgTable('edges', {
   lastActivityAt: timestamp('last_activity_at', { withTimezone: true }),
 }, (table) => ({
   identityIdx: index('edges_identity_idx').on(table.identityId),
+  handleIdx: index('edges_handle_idx').on(table.handleId),
   addressIdx: uniqueIndex('edges_address_idx').on(table.address),
   typeIdx: index('edges_type_idx').on(table.type),
+  bridgeTypeIdx: index('edges_bridge_type_idx').on(table.bridgeType),
+  isNativeIdx: index('edges_is_native_idx').on(table.isNative),
 }));
 
 // ============================================

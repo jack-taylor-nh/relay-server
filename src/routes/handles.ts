@@ -1,201 +1,127 @@
 /**
  * Handle Routes
  * 
- * POST /v1/handle/claim - Claim a handle
- * GET /v1/handle/resolve - Resolve a handle to public key
- * DELETE /v1/handle/:name - Release a handle
+ * POST /v1/handles - Create a new handle
+ * GET /v1/handles - List all handles for authenticated user
+ * GET /v1/handles/:handle - Resolve handle to public key (public)
  */
 
 import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
-import { db, handles, identities } from '../db/index.js';
-import { validateHandle, normalizeHandle, verifyString, fromBase64, computeFingerprint } from '../core/index.js';
+import { db } from '../db/index.js';
+import { handles, identities } from '../db/schema.js';
+import { authMiddleware } from '../middleware/auth.js';
+import { randomUUID } from 'crypto';
 
 export const handleRoutes = new Hono();
 
-/**
- * Claim a handle
- */
-handleRoutes.post('/claim', async (c) => {
-  const body = await c.req.json<{
-    handle: string;
-    publicKey: string;
-    nonce: string;
-    signature: string;
-  }>();
+// POST /v1/handles - Create a new handle
+handleRoutes.post('/', authMiddleware, async (c) => {
+  const identityId = c.get('identityId') as string;
+  const body = await c.req.json();
 
-  if (!body.handle || !body.publicKey || !body.nonce || !body.signature) {
-    return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
-  }
+  const { handle, displayName } = body;
 
   // Validate handle format
-  const normalizedHandle = normalizeHandle(body.handle);
-  const validation = validateHandle(normalizedHandle);
-  
-  if (!validation.valid) {
-    return c.json({ 
-      code: 'HANDLE_INVALID', 
-      message: validation.error,
+  if (!handle || typeof handle !== 'string') {
+    return c.json({ error: 'Handle is required' }, 400);
+  }
+
+  // Handle validation: alphanumeric, underscores, hyphens, 3-32 chars, lowercase
+  const handleRegex = /^[a-z0-9_-]{3,32}$/;
+  if (!handleRegex.test(handle)) {
+    return c.json({
+      error: 'Invalid handle format. Must be 3-32 characters, lowercase letters, numbers, underscores, and hyphens only.'
     }, 400);
   }
 
-  // Check if handle is already taken
-  const existing = await db
-    .select()
-    .from(handles)
-    .where(eq(handles.name, normalizedHandle))
-    .limit(1);
+  try {
+    // Create the handle
+    const [newHandle] = await db.insert(handles).values({
+      id: randomUUID(),
+      identityId,
+      handle,
+      displayName: displayName || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).returning();
 
-  if (existing.length > 0) {
-    return c.json({ code: 'HANDLE_TAKEN', message: 'This handle is already claimed' }, 409);
+    return c.json({
+      id: newHandle.id,
+      handle: newHandle.handle,
+      displayName: newHandle.displayName,
+      createdAt: newHandle.createdAt,
+      updatedAt: newHandle.updatedAt,
+    }, 201);
+  } catch (error: any) {
+    // Handle unique constraint violation
+    if (error.code === '23505') {
+      return c.json({ error: 'Handle already taken' }, 409);
+    }
+    console.error('Error creating handle:', error);
+    return c.json({ error: 'Failed to create handle' }, 500);
   }
-
-  // Verify signature
-  const publicKey = fromBase64(body.publicKey);
-  const messageToSign = `relay-claim:${normalizedHandle}:${body.nonce}`;
-  
-  const isValid = verifyString(messageToSign, body.signature, publicKey);
-  
-  if (!isValid) {
-    return c.json({ code: 'INVALID_SIGNATURE', message: 'Signature verification failed' }, 401);
-  }
-
-  // Compute fingerprint (identity ID)
-  const identityId = computeFingerprint(publicKey);
-
-  // Ensure identity exists
-  const [identity] = await db
-    .select()
-    .from(identities)
-    .where(eq(identities.id, identityId))
-    .limit(1);
-
-  if (!identity) {
-    return c.json({ code: 'IDENTITY_NOT_FOUND', message: 'Identity not registered. Register first.' }, 404);
-  }
-
-  // Check if this is the first handle for this identity
-  const existingHandles = await db
-    .select()
-    .from(handles)
-    .where(eq(handles.identityId, identityId));
-
-  const isPrimary = existingHandles.length === 0;
-
-  // Store handle
-  await db.insert(handles).values({
-    name: normalizedHandle,
-    identityId,
-    isPrimary,
-    status: 'active',
-  });
-
-  return c.json({
-    handle: normalizedHandle,
-    identityId,
-    isPrimary,
-    claimedAt: new Date().toISOString(),
-  }, 201);
 });
 
-/**
- * Release a handle (mark as disabled)
- */
-handleRoutes.delete('/:name', async (c) => {
-  const handleName = normalizeHandle(c.req.param('name'));
-  
-  const body = await c.req.json<{
-    publicKey: string;
-    nonce: string;
-    signature: string;
-  }>();
+// GET /v1/handles - List all handles for authenticated user
+handleRoutes.get('/', authMiddleware, async (c) => {
+  const identityId = c.get('identityId') as string;
 
-  if (!body.publicKey || !body.nonce || !body.signature) {
-    return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
+  try {
+    const userHandles = await db
+      .select({
+        id: handles.id,
+        handle: handles.handle,
+        displayName: handles.displayName,
+        createdAt: handles.createdAt,
+        updatedAt: handles.updatedAt,
+      })
+      .from(handles)
+      .where(eq(handles.identityId, identityId));
+
+    return c.json({ handles: userHandles });
+  } catch (error) {
+    console.error('Error fetching handles:', error);
+    return c.json({ error: 'Failed to fetch handles' }, 500);
   }
+});
 
-  // Verify ownership
-  const publicKey = fromBase64(body.publicKey);
-  const messageToSign = `relay-release:${handleName}:${body.nonce}`;
-  const isValid = verifyString(messageToSign, body.signature, publicKey);
-
-  if (!isValid) {
-    return c.json({ code: 'INVALID_SIGNATURE', message: 'Signature verification failed' }, 401);
-  }
-
-  const identityId = computeFingerprint(publicKey);
-
-  // Find the handle and verify ownership
-  const [handle] = await db
-    .select()
-    .from(handles)
-    .where(eq(handles.name, handleName))
-    .limit(1);
+// GET /v1/handles/:handle - Resolve handle to public key (public endpoint)
+handleRoutes.get('/:handle', async (c) => {
+  const handle = c.req.param('handle');
 
   if (!handle) {
-    return c.json({ code: 'HANDLE_NOT_FOUND', message: 'Handle not found' }, 404);
+    return c.json({ error: 'Handle is required' }, 400);
   }
 
-  if (handle.identityId !== identityId) {
-    return c.json({ code: 'FORBIDDEN', message: 'You do not own this handle' }, 403);
+  try {
+    // Join handles with identities to get public key
+    const result = await db
+      .select({
+        handle: handles.handle,
+        displayName: handles.displayName,
+        publicKey: identities.publicKey,
+        createdAt: handles.createdAt,
+      })
+      .from(handles)
+      .innerJoin(identities, eq(handles.identityId, identities.id))
+      .where(eq(handles.handle, handle))
+      .limit(1);
+
+    if (result.length === 0) {
+      return c.json({ error: 'Handle not found' }, 404);
+    }
+
+    const resolved = result[0];
+
+    return c.json({
+      handle: resolved.handle,
+      displayName: resolved.displayName,
+      publicKey: resolved.publicKey,
+      createdAt: resolved.createdAt,
+    });
+  } catch (error) {
+    console.error('Error resolving handle:', error);
+    return c.json({ error: 'Failed to resolve handle' }, 500);
   }
-
-  // Disable the handle
-  await db
-    .update(handles)
-    .set({ status: 'disabled', disabledAt: new Date() })
-    .where(eq(handles.name, handleName));
-
-  return c.json({ message: 'Handle released', handle: handleName });
-});
-
-/**
- * Resolve a handle to public key
- */
-handleRoutes.get('/resolve', async (c) => {
-  const handleQuery = c.req.query('handle');
-  
-  if (!handleQuery) {
-    return c.json({ code: 'VALIDATION_ERROR', message: 'handle query parameter is required' }, 400);
-  }
-
-  const normalizedHandle = normalizeHandle(handleQuery);
-
-  // Join handles with identities to get public key and home server
-  const [result] = await db
-    .select({
-      name: handles.name,
-      identityId: handles.identityId,
-      isPrimary: handles.isPrimary,
-      status: handles.status,
-      publicKey: identities.publicKey,
-      homeServer: identities.homeServer,
-      identityStatus: identities.status,
-      claimedAt: handles.claimedAt,
-    })
-    .from(handles)
-    .innerJoin(identities, eq(handles.identityId, identities.id))
-    .where(eq(handles.name, normalizedHandle))
-    .limit(1);
-
-  if (!result) {
-    return c.json({ code: 'HANDLE_NOT_FOUND', message: 'Handle not found' }, 404);
-  }
-
-  if (result.status !== 'active') {
-    return c.json({ code: 'HANDLE_DISABLED', message: 'Handle is no longer active' }, 410);
-  }
-
-  // Don't expose hidden identities via handle lookup
-  if (result.identityStatus === 'hidden') {
-    return c.json({ code: 'HANDLE_NOT_FOUND', message: 'Handle not found' }, 404);
-  }
-
-  return c.json({
-    handle: result.name,
-    publicKey: result.publicKey,
-    identityId: result.identityId,
-    homeServer: result.homeServer,
-    claimedAt: result.claimedAt.toISOString(),
-  });
 });
