@@ -7,7 +7,7 @@
  */
 
 import { Hono } from 'hono';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { handles, identities, edges } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -120,26 +120,31 @@ handleRoutes.get('/', authMiddleware, async (c) => {
   }
 });
 
-// GET /v1/handles/:handle - Resolve handle to public key (public endpoint)
-handleRoutes.get('/:handle', async (c) => {
-  const handle = c.req.param('handle');
-
-  if (!handle) {
-    return c.json({ error: 'Handle is required' }, 400);
-  }
-
+// POST /v1/handles/resolve - Resolve handle to public key (preferred, handle in body)
+handleRoutes.post('/resolve', async (c) => {
   try {
-    // Join handles with identities to get public key
+    const body = await c.req.json<{ handle: string }>();
+    const handle = body.handle?.trim().toLowerCase();
+
+    if (!handle) {
+      return c.json({ error: 'Handle is required' }, 400);
+    }
+
+    // Query edges table for native edge (handle)
     const result = await db
       .select({
-        handle: handles.handle,
-        displayName: handles.displayName,
+        handle: edges.address,
+        displayName: sql<string>`${edges.metadata}->>'displayName'`,
         publicKey: identities.publicKey,
-        createdAt: handles.createdAt,
+        createdAt: edges.createdAt,
       })
-      .from(handles)
-      .innerJoin(identities, eq(handles.identityId, identities.id))
-      .where(eq(handles.handle, handle))
+      .from(edges)
+      .innerJoin(identities, eq(edges.identityId, identities.id))
+      .where(and(
+        eq(edges.address, handle),
+        eq(edges.type, 'native'),
+        eq(edges.status, 'active')
+      ))
       .limit(1);
 
     if (result.length === 0) {
@@ -155,7 +160,58 @@ handleRoutes.get('/:handle', async (c) => {
       createdAt: resolved.createdAt,
     });
   } catch (error) {
-    console.error('Error resolving handle:', error);
+    console.error('Error resolving handle:', {
+      code: (error as any).code,
+      message: 'Failed to resolve handle',
+    });
+    return c.json({ error: 'Failed to resolve handle' }, 500);
+  }
+});
+
+// GET /v1/handles/:handle - Resolve handle to public key (DEPRECATED: use POST /resolve)
+// ⚠️ SECURITY: Handle appears in URL path and server logs
+handleRoutes.get('/:handle', async (c) => {
+  const handle = c.req.param('handle');
+
+  if (!handle) {
+    return c.json({ error: 'Handle is required' }, 400);
+  }
+
+  try {
+    // Query edges table for native edge (handle)
+    const result = await db
+      .select({
+        handle: edges.address,
+        displayName: sql<string>`${edges.metadata}->>'displayName'`,
+        publicKey: identities.publicKey,
+        createdAt: edges.createdAt,
+      })
+      .from(edges)
+      .innerJoin(identities, eq(edges.identityId, identities.id))
+      .where(and(
+        eq(edges.address, handle),
+        eq(edges.type, 'native'),
+        eq(edges.status, 'active')
+      ))
+      .limit(1);
+
+    if (result.length === 0) {
+      return c.json({ error: 'Handle not found' }, 404);
+    }
+
+    const resolved = result[0];
+
+    return c.json({
+      handle: resolved.handle,
+      displayName: resolved.displayName,
+      publicKey: resolved.publicKey,
+      createdAt: resolved.createdAt,
+    });
+  } catch (error) {
+    console.error('Error resolving handle:', {
+      code: (error as any).code,
+      message: 'Failed to resolve handle',
+    });
     return c.json({ error: 'Failed to resolve handle' }, 500);
   }
 });
