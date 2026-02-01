@@ -19,6 +19,7 @@ interface Env {
   API_BASE_URL: string;
   API_SECRET: string; // Shared secret for worker-to-API auth
   WORKER_PRIVATE_KEY: string; // Ed25519 private key for signing payloads
+  WORKER_ENCRYPTION_PRIVATE_KEY: string; // X25519 private key for decrypting recipient emails
   DKIM_PRIVATE_KEY?: string; // RSA private key for DKIM email signing
   EDGE_CACHE: KVNamespace;
 }
@@ -98,13 +99,37 @@ export default {
     // CORS headers for client requests
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     };
     
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
+    }
+    
+    // GET /public-key - Get worker's encryption public key
+    if (url.pathname === '/public-key' && request.method === 'GET') {
+      try {
+        const privateKeyHex = env.WORKER_ENCRYPTION_PRIVATE_KEY;
+        const privateKeyBytes = hexToBytes(privateKeyHex);
+        const keypair = nacl.box.keyPair.fromSecretKey(privateKeyBytes);
+        
+        return new Response(JSON.stringify({ 
+          publicKey: encodeBase64(keypair.publicKey)
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (error) {
+        console.error('Public key error:', error);
+        return new Response(JSON.stringify({ 
+          error: 'Failed to get public key' 
+        }), { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        });
+      }
     }
     
     // POST /send - Send email via MailChannels
@@ -332,6 +357,44 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 /**
+ * Decrypt recipient email address using worker's X25519 private key
+ * Client encrypts: ephemeralPubkey:nonce:ciphertext (all base64)
+ */
+function decryptRecipient(encryptedPackage: string, privateKeyHex: string): string {
+  try {
+    const parts = encryptedPackage.split(':');
+    if (parts.length !== 3) {
+      throw new Error('Invalid encrypted package format');
+    }
+
+    const ephemeralPubkey = decodeBase64(parts[0]);
+    const nonce = decodeBase64(parts[1]);
+    const ciphertext = decodeBase64(parts[2]);
+
+    // Derive worker's keypair from private key
+    const workerPrivateKey = hexToBytes(privateKeyHex);
+    const workerKeypair = nacl.box.keyPair.fromSecretKey(workerPrivateKey);
+
+    // Decrypt using box (X25519-XSalsa20-Poly1305)
+    const decrypted = nacl.box.open(
+      ciphertext,
+      nonce,
+      ephemeralPubkey,
+      workerKeypair.secretKey
+    );
+
+    if (!decrypted) {
+      throw new Error('Decryption failed - invalid ciphertext or key');
+    }
+
+    return new TextDecoder().decode(decrypted);
+  } catch (error) {
+    console.error('Recipient decryption error:', error);
+    throw error;
+  }
+}
+
+/**
  * Handle sending email via MailChannels (zero-knowledge)
  * 
  * Flow:
@@ -346,19 +409,10 @@ async function handleSendEmail(
   env: Env,
   corsHeaders: Record<string, string>
 ): Promise<Response> {
-  // Verify authentication
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
   const body = await request.json() as {
     conversationId: string;
     content: string;
-    encryptedRecipient: string;  // Encrypted for worker's X25519 key
+    encryptedRecipient: string;  // Encrypted for worker's X25519 key (base64: ephemeralPubkey:nonce:ciphertext)
     edgeAddress: string;          // From address (e.g., xyz123@rlymsg.com)
     subject: string;
     inReplyTo?: string;
@@ -372,13 +426,8 @@ async function handleSendEmail(
   }
 
   try {
-    // Decrypt recipient email temporarily in memory
-    // Note: Worker would need its own X25519 keypair for this
-    // For now, we'll accept the recipient in the request
-    // TODO: Implement worker keypair and client encrypts to worker's key
-    
-    // Parse encrypted recipient (for now, assuming it's the decrypted email)
-    const recipientEmail = body.encryptedRecipient; // TEMP: Should decrypt
+    // Decrypt recipient email with worker's private key (zero-knowledge!)
+    const recipientEmail = decryptRecipient(body.encryptedRecipient, env.WORKER_ENCRYPTION_PRIVATE_KEY);
     
     // Build MailChannels request with DKIM signing
     const mailChannelsPayload: any = {

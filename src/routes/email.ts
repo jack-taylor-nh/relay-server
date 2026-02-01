@@ -431,17 +431,17 @@ emailRoutes.post('/dispatch', authMiddleware, async (c) => {
 });
 /**
  * Record sent email message (called after worker sends via MailChannels)
- * Server stores the message in conversation history (plaintext for now)
+ * Server stores the message in conversation history (encrypted content for zero-knowledge!)
  */
 emailRoutes.post('/record-sent', authMiddleware, async (c) => {
   const identityId = c.get('fingerprint');
   
   const body = await c.req.json<{
     conversationId: string;
-    content: string;
+    encryptedContent: string;  // Encrypted for identity's key (ephemeralPubkey:nonce:ciphertext)
   }>();
 
-  if (!body.conversationId || !body.content) {
+  if (!body.conversationId || !body.encryptedContent) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
   }
 
@@ -469,7 +469,7 @@ emailRoutes.post('/record-sent', authMiddleware, async (c) => {
     return c.json({ code: 'FORBIDDEN', message: 'You are not a participant' }, 403);
   }
 
-  // Store sent message in database
+  // Store sent message in database (encrypted!)
   const messageId = ulid();
   const now = new Date();
 
@@ -480,9 +480,9 @@ emailRoutes.post('/record-sent', authMiddleware, async (c) => {
     edgeId: conv.edgeId,
     origin: 'email',
     securityLevel: 'gateway_secured',
-    contentType: 'text/plain',
+    contentType: 'application/encrypted',
     senderIdentityId: identityId,
-    plaintextContent: body.content,
+    encryptedContent: body.encryptedContent,  // Zero-knowledge storage!
     createdAt: now,
   });
 
