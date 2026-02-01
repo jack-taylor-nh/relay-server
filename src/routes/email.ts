@@ -41,8 +41,9 @@ async function workerAuthMiddleware(c: any, next: any) {
   // Verify signature if provided (optional for backwards compatibility)
   const signature = c.req.header('X-Worker-Signature');
   if (signature && WORKER_PUBLIC_KEY) {
-    const body = await c.req.json();
-    c.set('parsedBody', body); // Cache parsed body for later use
+    // Clone request to read body (Hono only allows reading body once)
+    const bodyText = await c.req.text();
+    const body = JSON.parse(bodyText);
     
     const messageToSign = `${body.edgeId}:${body.senderHash}:${body.encryptedPayload}:${body.receivedAt}`;
     const isValid = verifySignature(messageToSign, signature, WORKER_PUBLIC_KEY);
@@ -89,8 +90,7 @@ function hexToBytes(hex: string): Uint8Array {
  * Process inbound email from worker
  */
 emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
-  // Get body (already parsed in middleware if signature was verified)
-  const body = c.get('parsedBody') || await c.req.json<{
+  const body = await c.req.json<{
     edgeId: string;
     identityId: string;
     senderHash: string;          // Hash for conversation matching
