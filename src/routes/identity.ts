@@ -125,7 +125,12 @@ identityRoutes.get('/:id', async (c) => {
 
   // Get handles for this identity
   const identityHandles = await db
-    .select({ name: handles.name, isPrimary: handles.isPrimary, status: handles.status })
+    .select({ 
+      id: handles.id,
+      handle: handles.handle, 
+      displayName: handles.displayName,
+      createdAt: handles.createdAt,
+    })
     .from(handles)
     .where(eq(handles.identityId, id));
 

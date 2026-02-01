@@ -95,13 +95,14 @@ messageRoutes.post('/send-native', async (c) => {
         id: randomUUID(),
         identityId: senderIdentityId,
         handleId: senderHandleId,
+        type: 'native',
         bridgeType: 'native',
         isNative: true,
         metadata: {},
-        externalIdHash: null,
+        address: senderHandle,
         status: 'active',
+        securityLevel: 'e2ee',
         createdAt: new Date(),
-        updatedAt: new Date(),
       }).returning();
       senderEdge = [newEdge];
     }
@@ -154,13 +155,11 @@ messageRoutes.post('/send-native', async (c) => {
         {
           conversationId,
           identityId: senderIdentityId,
-          role: 'member',
           joinedAt: now,
         },
         {
           conversationId,
           identityId: recipient.identityId,
-          role: 'member',
           joinedAt: now,
         },
       ]);

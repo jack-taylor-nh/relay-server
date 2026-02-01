@@ -10,6 +10,7 @@ import { verifySessionToken } from '../lib/jwt.js';
 declare module 'hono' {
   interface ContextVariableMap {
     fingerprint: string;
+    identityId: string;
   }
 }
 
@@ -35,6 +36,7 @@ export async function authMiddleware(c: Context, next: Next) {
     }
 
     c.set('fingerprint', payload.fingerprint);
+    c.set('identityId', payload.fingerprint); // identityId is fingerprint
     await next();
   } catch (error) {
     return c.json({ code: 'UNAUTHORIZED', message: 'Invalid token' }, 401);
