@@ -1,26 +1,53 @@
 # Relay Server
 
-The backend API server for [Relay](https://github.com/yourusername/relay) - a privacy-focused, handle-based communication platform.
+The backend API server for [Relay](https://github.com/relay-protocol) - a zero-knowledge, privacy-focused communication platform.
 
 ## Overview
 
 Relay Server provides the core backend infrastructure for the Relay protocol, enabling:
 
-- **Identity Management**: Cryptographic identity creation and authentication
-- **Handle System**: User-friendly handles (e.g., `&alice`) mapped to cryptographic identities
-- **Edge Management**: Disposable contact surfaces (email aliases, contact links)
-- **E2E Encrypted Messaging**: Native Relay-to-Relay encrypted communication
-- **Email Gateway**: Secure email alias forwarding and replies
+- **Zero-Knowledge Architecture**: Server cannot decrypt user data or identify communication partners
+- **Identity Management**: Cryptographic identity creation with Ed25519/X25519 keypairs
+- **Edge Management**: Disposable contact surfaces (email aliases, bridge endpoints)
+- **E2E Encrypted Messaging**: All message content encrypted client-side
+- **Email Bridge**: Secure email gateway with transient recipient decryption
+- **Bridge Infrastructure**: Foundation for Discord, Telegram, SMS, and other communication bridges
+
+## Security & Privacy
+
+**Relay follows a zero-knowledge design:**
+
+- ✅ Server cannot decrypt message content (encrypted client-side)
+- ✅ Server cannot identify recipients (encrypted for workers, hashed for matching)
+- ✅ Server cannot link edges to user identities (architectural separation)
+- ✅ Workers decrypt recipients transiently only (never stored)
+- ✅ Minimal metadata collection (timestamps rounded to 5 minutes, no IP logging)
+- ✅ Cryptographic signatures verify all worker communications
+
+See [RELAY_ETHOS.md](../RELAY_ETHOS.md) for complete security principles and [RELAY_THREAT_MODEL.md](../relay-protocol/RELAY_THREAT_MODEL.md) for threat analysis.
 
 ## Architecture
 
-Relay Server is built with:
+Relay Server is built with a zero-knowledge, defense-in-depth approach:
 
-- **Runtime**: Node.js with TypeScript
+- **Runtime**: Node.js 18+ with TypeScript
 - **Framework**: [Hono](https://hono.dev) - Fast, lightweight web framework
-- **Database**: PostgreSQL with [Drizzle ORM](https://orm.drizzle.team)
-- **Crypto**: libsodium (Ed25519 + X25519 + XChaCha20-Poly1305)
-- **Auth**: JWT-based session tokens with signed challenge-response
+- **Database**: PostgreSQL 14+ with [Drizzle ORM](https://orm.drizzle.team)
+- **Crypto**: TweetNaCl (Ed25519, X25519, XSalsa20-Poly1305)
+- **Auth**: JWT-based sessions with Ed25519 signature verification
+- **Workers**: Cloudflare Workers for bridge transient decryption
+- **Email**: Resend API for sending (MailChannels deprecated June 2024)
+
+### Zero-Knowledge Components
+
+1. **API Server (Railway)**: Stores encrypted messages, routes data, never decrypts
+2. **Email Worker (Cloudflare)**: Decrypts recipient emails transiently for sending
+3. **Client (Extension)**: All encryption/decryption happens here
+
+```
+External Email → Worker → [Encrypt] → API → [Store Encrypted] → Client → [Decrypt]
+Client → [Encrypt] → API → [Store Encrypted] → Worker → [Decrypt Recipient] → Resend → External Email
+```
 
 ## Prerequisites
 
@@ -47,20 +74,36 @@ cp .env.example .env
 Edit `.env` with your configuration:
 
 ```env
+# Database
 DATABASE_URL=postgresql://user:password@localhost:5432/relay
+
+# Server
 PORT=3000
+NODE_ENV=development
+
+# Authentication & Security
 JWT_SECRET=<generate-with-openssl>
-WORKER_SECRET=<generate-with-openssl>
-EMAIL_DOMAIN=yourdomain.com
+
+# Worker Authentication
+WORKER_SECRET=<generate-with-openssl>  # Shared secret for worker auth
+WORKER_PUBLIC_KEY=<ed25519-public-key-hex>  # Worker's Ed25519 public key for signature verification
+
+# Email
+RESEND_API_KEY=<your-resend-api-key>  # For sending emails via Resend
+
+# Optional
+DATABASE_URL_UNPOOLED=<connection-pooler-url>  # For migrations
 ```
 
 **Generate secrets:**
 ```bash
-# JWT Secret
-openssl rand -base64 32
+# JWT Secret (32 bytes)
+openssl rand -hex 32
 
-# Worker Secret
-openssl rand -base64 32
+# Worker Secret (32 bytes)
+openssl rand -hex 32
+
+# Worker Ed25519 keypair (see email-worker/README.md)
 ```
 
 ### 3. Initialize Database
@@ -82,49 +125,53 @@ The server will start on `http://localhost:3000`.
 ## API Endpoints
 
 ### Authentication
-
-- `POST /api/auth/nonce` - Request authentication challenge
-- `POST /api/auth/verify` - Verify signed challenge and get session token
+- `POST /v1/auth/register` - Create new identity with public key
+- `POST /v1/auth/login` - Authenticate via Ed25519 signature challenge
 
 ### Identity
+- `GET /v1/identity` - Get current user's identity
+- `GET /v1/identity/:id` - Get identity by ID
+- `PUT /v1/identity` - Update identity profile
 
-- `GET /api/identity/:id` - Get identity profile
-- `PUT /api/identity` - Update identity profile
-
-### Handles
-
-- `POST /api/handles/claim` - Claim a handle
-- `GET /api/handles/:name` - Resolve handle to identity
-- `GET /api/handles` - List user's handles
-
-### Edges (Contact Surfaces)
-
-- `POST /api/edges` - Create new edge (email alias, contact link)
-- `GET /api/edges` - List user's edges
-- `PUT /api/edges/:id` - Update edge
-- `DELETE /api/edges/:id` - Disable/rotate edge
+### Edges (Communication Endpoints)
+- `POST /v1/edges` - Create new edge (email alias, future: Discord, Telegram, etc.)
+- `GET /v1/edges` - List user's edges
+- `GET /v1/edges/:id` - Get edge details
+- `DELETE /v1/edges/:id` - Delete edge
 
 ### Conversations
+- `GET /v1/conversations` - List conversations
+- `GET /v1/conversations/:id` - Get conversation details
+- `GET /v1/conversations/:id/messages` - Get messages (returns encrypted content)
+- `POST /v1/conversations/:id/messages` - Send message (accepts encrypted content)
 
-- `GET /api/conversations` - List conversations
-- `GET /api/conversations/:id` - Get conversation details
-- `GET /api/conversations/:id/messages` - Get messages
+### Email (Bridge)
+- `POST /v1/email/inbound` - Receive email from worker (internal, worker-authenticated)
+- `POST /v1/email/send` - Prepare email send (returns context for client)
+- `POST /v1/email/record-sent` - Record sent message (accepts encrypted content)
 
-### Email
-
-- `POST /api/email/send` - Send email from alias
-- `POST /api/email/webhook` - Receive incoming email (internal)
+### Handles (Future - Phase 5)
+- `POST /v1/handles` - Create handle (@username)
+- `GET /v1/handles/:handle` - Resolve handle to public key
+- `GET /v1/handles` - List user's handles
 
 ## Database Schema
 
-The server uses a PostgreSQL database with the following core tables:
+The server uses PostgreSQL with the following core tables:
 
-- **identities**: Cryptographic identities (public keys)
-- **handles**: User-friendly names mapped to identities
-- **edges**: Contact surfaces (email aliases, links, bridges)
-- **conversations**: Message threads
-- **messages**: Individual messages
-- **nonces**: Authentication challenges
+- **identities**: User accounts with Ed25519 public keys
+- **edges**: Communication endpoints (email aliases, bridge connections)
+- **conversations**: Message threads linked to edges
+- **conversation_participants**: Participants with hashed external IDs (zero-knowledge)
+- **messages**: Encrypted message content (contentType: 'application/encrypted')
+- **email_messages**: Email-specific metadata (Message-ID, In-Reply-To)
+
+**Key zero-knowledge features:**
+- Message content stored as `encryptedContent` (JSON: ephemeralPubkey, nonce, ciphertext)
+- External IDs (email addresses) stored as salted hashes for conversation matching
+- Bridge credentials encrypted in `edges.metadata`
+- Timestamps rounded to 5 minutes
+- No IP address logging
 
 See [`drizzle/`](./drizzle/) for full schema migrations.
 
@@ -162,16 +209,40 @@ The server works on any Node.js platform (Render, Fly.io, etc.):
 
 ## Security
 
-- All authentication uses Ed25519 signature verification
-- Session tokens are JWT-signed with HS256
-- Email worker auth uses shared secret (`WORKER_SECRET`)
-- CORS configured for Chrome extensions, localhost, and production domains
-- Database uses parameterized queries (SQL injection protection)
+### Zero-Knowledge Guarantees
+
+- ✅ **Message content encrypted client-side** - Server stores ciphertext only
+- ✅ **Recipient addresses encrypted** - Workers decrypt transiently, never store
+- ✅ **External IDs hashed** - Email addresses, Discord IDs stored as salted hashes
+- ✅ **Worker authentication** - Ed25519 signatures verify all worker communications
+- ✅ **No IP logging** - Rate limiting by identity, not IP address
+- ✅ **Minimal metadata** - Timestamps rounded, no behavioral tracking
+- ✅ **Architectural isolation** - Edges not directly linked to identities
+
+### Authentication & Authorization
+
+- **User auth**: JWT tokens with Ed25519 signature verification
+- **Worker auth**: Shared secret + Ed25519 payload signatures
+- **CORS**: Configured for extensions and production domains
+- **SQL injection**: Parameterized queries via Drizzle ORM
+
+### Threat Model
+
+See [../relay-protocol/RELAY_THREAT_MODEL.md](../relay-protocol/RELAY_THREAT_MODEL.md) for comprehensive threat analysis.
+
+**Primary defense:** Even if server is fully compromised (database, API, everything), attacker cannot:
+- Decrypt message content (no keys on server)
+- Identify users (architectural separation)
+- Link edges to identities (requires multiple correlations + decryption)
+- Read historical messages (encrypted with user keys)
 
 ## Related Projects
 
-- **[relay-protocol](https://github.com/yourusername/relay-protocol)**: Protocol specification and threat model
-- **[relay-client](https://github.com/yourusername/relay-client)**: Browser extension and core library
+- **[relay-protocol](../relay-protocol/)**: Protocol specification, threat model, and architecture docs
+- **[relay-client](../relay-client/)**: Browser extension and core crypto library
+- **[email-worker](./email-worker/)**: Cloudflare Worker for email bridge with transient decryption
+- **[RELAY_ETHOS.md](../RELAY_ETHOS.md)**: Security & privacy principles and implementation standards
+- **[RELAY_TODO.md](../RELAY_TODO.md)**: Development roadmap and planned features
 
 ## License
 

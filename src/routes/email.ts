@@ -50,13 +50,7 @@ async function workerAuthMiddleware(c: any, next: any) {
     const body = JSON.parse(bodyText);
     
     const messageToSign = `${body.edgeId}:${body.senderHash}:${body.encryptedPayload}:${body.receivedAt}`;
-    console.log('[SIGNATURE DEBUG] Message to verify:', messageToSign.substring(0, 100) + '...');
-    console.log('[SIGNATURE DEBUG] Signature:', signature.substring(0, 20) + '...');
-    console.log('[SIGNATURE DEBUG] Public key:', WORKER_PUBLIC_KEY?.substring(0, 20) + '...');
-    
     const isValid = verifySignature(messageToSign, signature, WORKER_PUBLIC_KEY);
-    
-    console.log('[SIGNATURE DEBUG] Verification result:', isValid);
     
     if (!isValid) {
       return c.json({ code: 'INVALID_SIGNATURE', message: 'Worker signature verification failed' }, 401);
