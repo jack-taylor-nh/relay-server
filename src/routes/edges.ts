@@ -286,6 +286,76 @@ edgeRoutes.delete('/:id', async (c) => {
 });
 
 /**
+ * Burn (permanently dispose) an edge
+ * 
+ * Burns the edge by:
+ * - Setting status to 'burned'
+ * - NULLing identityId and handleId (makes edge untraceable)
+ * - Keeping address record (prevents reuse/collision)
+ * - Conversations remain but can't be traced back to identity
+ */
+edgeRoutes.delete('/:id', async (c) => {
+  const edgeId = c.req.param('id');
+
+  const body = await c.req.json<{
+    publicKey: string;
+    nonce: string;
+    signature: string;
+  }>();
+
+  if (!body.publicKey || !body.nonce || !body.signature) {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
+  }
+
+  // Verify ownership
+  const publicKey = fromBase64(body.publicKey);
+  const messageToSign = `relay-burn-edge:${edgeId}:${body.nonce}`;
+  const isValid = verifyString(messageToSign, body.signature, publicKey);
+
+  if (!isValid) {
+    return c.json({ code: 'INVALID_SIGNATURE', message: 'Signature verification failed' }, 401);
+  }
+
+  const identityId = computeFingerprint(publicKey);
+
+  // Find edge and verify ownership
+  const [edge] = await db
+    .select()
+    .from(edges)
+    .where(eq(edges.id, edgeId))
+    .limit(1);
+
+  if (!edge) {
+    return c.json({ code: 'EDGE_NOT_FOUND', message: 'Edge not found' }, 404);
+  }
+
+  if (edge.identityId !== identityId) {
+    return c.json({ code: 'FORBIDDEN', message: 'You do not own this edge' }, 403);
+  }
+
+  if (edge.status === 'burned') {
+    return c.json({ code: 'ALREADY_BURNED', message: 'Edge is already burned' }, 400);
+  }
+
+  // Burn the edge: NULL identity/handle references, set status to burned
+  await db
+    .update(edges)
+    .set({
+      identityId: null,  // Unlink from identity (untraceable)
+      handleId: null,    // Unlink from handle (untraceable)
+      status: 'burned',
+      disabledAt: new Date(),
+    })
+    .where(eq(edges.id, edgeId));
+
+  return c.json({
+    message: 'Edge burned and unlinked from identity',
+    id: edgeId,
+    note: 'This edge address is permanently reserved and cannot be reused',
+  });
+});
+
+/**
  * Update edge (label, policy)
  */
 edgeRoutes.patch('/:id', async (c) => {

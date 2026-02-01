@@ -9,7 +9,7 @@
 import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { handles, identities } from '../db/schema.js';
+import { handles, identities, edges } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { randomUUID } from 'crypto';
 
@@ -36,14 +36,33 @@ handleRoutes.post('/', authMiddleware, async (c) => {
   }
 
   try {
+    const now = new Date();
+
     // Create the handle
     const [newHandle] = await db.insert(handles).values({
       id: randomUUID(),
       identityId,
       handle,
       displayName: displayName || null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
+    }).returning();
+
+    // Auto-create native edge for this handle
+    const { ulid } = await import('ulid');
+    const [nativeEdge] = await db.insert(edges).values({
+      id: ulid(),
+      identityId,
+      handleId: newHandle.id,
+      type: 'native',
+      bridgeType: 'native',
+      isNative: true,
+      address: handle,  // Native edge address is the handle
+      status: 'active',
+      securityLevel: 'e2ee',
+      metadata: {},
+      createdAt: now,
+      messageCount: 0,
     }).returning();
 
     return c.json({
@@ -52,6 +71,11 @@ handleRoutes.post('/', authMiddleware, async (c) => {
       displayName: newHandle.displayName,
       createdAt: newHandle.createdAt,
       updatedAt: newHandle.updatedAt,
+      nativeEdge: {
+        id: nativeEdge.id,
+        address: nativeEdge.address,
+        type: nativeEdge.type,
+      },
     }, 201);
   } catch (error: any) {
     // Handle unique constraint violation
@@ -123,5 +147,37 @@ handleRoutes.get('/:handle', async (c) => {
   } catch (error) {
     console.error('Error resolving handle:', error);
     return c.json({ error: 'Failed to resolve handle' }, 500);
+  }
+});
+
+// DELETE /v1/handles/:id - Delete a handle
+handleRoutes.delete('/:id', authMiddleware, async (c) => {
+  const identityId = c.get('identityId') as string;
+  const handleId = c.req.param('id');
+
+  if (!handleId) {
+    return c.json({ error: 'Handle ID is required' }, 400);
+  }
+
+  try {
+    // Verify ownership and delete
+    const result = await db
+      .delete(handles)
+      .where(eq(handles.id, handleId))
+      .returning({ id: handles.id, identityId: handles.identityId });
+
+    if (result.length === 0) {
+      return c.json({ error: 'Handle not found' }, 404);
+    }
+
+    // Verify the handle belonged to the authenticated user
+    if (result[0].identityId !== identityId) {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    return c.json({ message: 'Handle deleted', id: handleId });
+  } catch (error) {
+    console.error('Error deleting handle:', error);
+    return c.json({ error: 'Failed to delete handle' }, 500);
   }
 });

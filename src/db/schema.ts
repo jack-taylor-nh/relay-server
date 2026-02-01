@@ -67,7 +67,7 @@ export type EdgeType =
   | 'slack'         // Slack bridge
   | 'other';        // Other platforms
 
-export type EdgeStatus = 'active' | 'disabled' | 'rotated';
+export type EdgeStatus = 'active' | 'disabled' | 'rotated' | 'burned';
 
 export type SecurityLevel = 'e2ee' | 'gateway_secured';
 
@@ -88,9 +88,9 @@ export type EdgePolicy = {
 export const edges = pgTable('edges', {
   /** Unique edge ID (ulid) */
   id: text('id').primaryKey(),
-  /** Owner identity ID */
-  identityId: text('identity_id').references(() => identities.id).notNull(),
-  /** Handle this edge belongs to (NEW - replaces direct identity link) */
+  /** Owner identity ID (nullable when edge is burned for privacy) */
+  identityId: text('identity_id').references(() => identities.id),
+  /** Handle this edge belongs to (nullable when edge is burned for privacy) */
   handleId: text('handle_id').references(() => handles.id, { onDelete: 'cascade' }),
   /** Bridge type: email, native, discord, telegram, sms, etc. (NEW) */
   bridgeType: text('bridge_type').notNull().default('email'),
