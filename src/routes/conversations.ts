@@ -7,7 +7,7 @@
  */
 
 import { Hono } from 'hono';
-import { eq, desc, and, lt, sql } from 'drizzle-orm';
+import { eq, desc, and, lt, sql, inArray } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { db, conversations, conversationParticipants, messages, edges, type SecurityLevel } from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -42,7 +42,7 @@ conversationRoutes.get('/', async (c) => {
   let query = db
     .select()
     .from(conversations)
-    .where(sql`${conversations.id} = ANY(${conversationIds})`)
+    .where(inArray(conversations.id, conversationIds))
     .orderBy(desc(conversations.lastActivityAt))
     .limit(limit + 1);
 
@@ -51,7 +51,7 @@ conversationRoutes.get('/', async (c) => {
       .select()
       .from(conversations)
       .where(and(
-        sql`${conversations.id} = ANY(${conversationIds})`,
+        inArray(conversations.id, conversationIds),
         lt(conversations.lastActivityAt, new Date(cursor))
       ))
       .orderBy(desc(conversations.lastActivityAt))

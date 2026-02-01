@@ -9,7 +9,7 @@ compatibility_date = "2024-01-01"
 [[email_handlers]]
 enabled = true
 # Route all emails to @rlymsg.com domain
-# matches = ".*@rlymsg\\.com"
+matches = ".*@rlymsg\\.com"
 
 # Environment variables (set via wrangler secret)
 [vars]
