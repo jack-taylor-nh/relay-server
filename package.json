@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.8.0",
-    "@relay/core": "file:../relay-client/core",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.29.3",
     "hono": "^4.0.0",
