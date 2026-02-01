@@ -7,7 +7,7 @@
  */
 
 import { Hono } from 'hono';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { handles, identities, edges } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -99,8 +99,13 @@ handleRoutes.get('/', authMiddleware, async (c) => {
         displayName: handles.displayName,
         createdAt: handles.createdAt,
         updatedAt: handles.updatedAt,
+        nativeEdgeId: edges.id,
       })
       .from(handles)
+      .leftJoin(edges, and(
+        eq(edges.handleId, handles.id),
+        eq(edges.isNative, true)
+      ))
       .where(eq(handles.identityId, identityId));
 
     return c.json({ handles: userHandles });
