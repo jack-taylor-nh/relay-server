@@ -18,12 +18,12 @@
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.29.3",
     "hono": "^4.0.0",
-    "libsodium-wrappers": "^0.7.13",
     "postgres": "^3.4.3",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
     "ulid": "^2.3.0"
   },
   "devDependencies": {
-    "@types/libsodium-wrappers": "^0.7.14",
     "@types/node": "^20.11.0",
     "drizzle-kit": "^0.31.8",
     "tsx": "^4.19.2",

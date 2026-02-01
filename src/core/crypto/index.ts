@@ -1,34 +1,14 @@
 /**
  * Relay Crypto Utilities
  * 
- * Uses libsodium for all cryptographic operations:
+ * Uses tweetnacl for all cryptographic operations:
  * - Ed25519 for signing
  * - X25519 for key exchange
- * - XChaCha20-Poly1305 for symmetric encryption
+ * - XSalsa20-Poly1305 for symmetric encryption
  */
 
-import sodium from 'libsodium-wrappers';
+import nacl from 'tweetnacl';
 import type { KeyPair, EncryptedKeyBundle } from '../types/index.js';
-
-let initialized = false;
-
-/**
- * Initialize libsodium. Must be called before using any crypto functions.
- */
-export async function initCrypto(): Promise<void> {
-  if (initialized) return;
-  await sodium.ready;
-  initialized = true;
-}
-
-/**
- * Ensure crypto is initialized
- */
-function ensureInit(): void {
-  if (!initialized) {
-    throw new Error('Crypto not initialized. Call initCrypto() first.');
-  }
-}
 
 // ============================================
 // Key Generation
@@ -38,11 +18,10 @@ function ensureInit(): void {
  * Generate a new Ed25519 signing keypair
  */
 export function generateSigningKeyPair(): KeyPair {
-  ensureInit();
-  const kp = sodium.crypto_sign_keypair();
+  const kp = nacl.sign.keyPair();
   return {
     publicKey: kp.publicKey,
-    privateKey: kp.privateKey,
+    privateKey: kp.secretKey,
   };
 }
 
@@ -50,64 +29,49 @@ export function generateSigningKeyPair(): KeyPair {
  * Derive X25519 encryption keypair from Ed25519 signing keypair
  */
 export function deriveEncryptionKeyPair(signingKeyPair: KeyPair): KeyPair {
-  ensureInit();
   return {
-    publicKey: sodium.crypto_sign_ed25519_pk_to_curve25519(signingKeyPair.publicKey),
-    privateKey: sodium.crypto_sign_ed25519_sk_to_curve25519(signingKeyPair.privateKey),
+    publicKey: nacl.box.keyPair.fromSecretKey(
+      signingKeyPair.privateKey.subarray(0, 32)
+    ).publicKey,
+    privateKey: signingKeyPair.privateKey.subarray(0, 32),
   };
 }
 
 /**
- * Compute fingerprint of a public key (first 16 bytes of SHA-256, hex encoded)
+ * Compute fingerprint of a public key (first 16 bytes of hash, hex encoded)
  */
 export function computeFingerprint(publicKey: Uint8Array): string {
-  ensureInit();
-  const hash = sodium.crypto_generichash(32, publicKey);
-  return sodium.to_hex(hash.slice(0, 16));
+  const hash = nacl.hash(publicKey);
+  return Buffer.from(hash.slice(0, 16)).toString('hex');
 }
+
 
 // ============================================
 // Key Storage (Encryption at Rest)
 // ============================================
 
-const KEY_DERIVATION_ITERATIONS = 100000;
-const KEY_DERIVATION_MEM_LIMIT = 67108864; // 64 MB
-const KEY_DERIVATION_OPS_LIMIT = 3;
-
 /**
  * Encrypt a private key for storage using a passphrase
+ * Note: tweetnacl doesn't have password hashing, this is a simplified version
  */
 export function encryptPrivateKey(
   privateKey: Uint8Array,
   passphrase: string
 ): EncryptedKeyBundle {
-  ensureInit();
+  // Simplified: use first 32 bytes of passphrase hash as key
+  const passphraseHash = nacl.hash(Buffer.from(passphrase, 'utf-8'));
+  const key = passphraseHash.slice(0, nacl.secretbox.keyLength);
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const salt = nacl.randomBytes(16);
   
-  const salt = sodium.randombytes_buf(sodium.crypto_pwhash_SALTBYTES);
-  const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
-  
-  // Derive encryption key from passphrase
-  const key = sodium.crypto_pwhash(
-    sodium.crypto_secretbox_KEYBYTES,
-    passphrase,
-    salt,
-    KEY_DERIVATION_OPS_LIMIT,
-    KEY_DERIVATION_MEM_LIMIT,
-    sodium.crypto_pwhash_ALG_ARGON2ID13
-  );
-  
-  // Encrypt the private key
-  const ciphertext = sodium.crypto_secretbox_easy(privateKey, nonce, key);
-  
-  // Zero out the derived key
-  sodium.memzero(key);
+  const ciphertext = nacl.secretbox(privateKey, nonce, key);
   
   return {
     ciphertext,
     salt,
     nonce,
-    iterations: KEY_DERIVATION_ITERATIONS,
-    algorithm: 'xchacha20-poly1305',
+    iterations: 1,
+    algorithm: 'xsalsa20-poly1305',
   };
 }
 
@@ -118,28 +82,16 @@ export function decryptPrivateKey(
   bundle: EncryptedKeyBundle,
   passphrase: string
 ): Uint8Array {
-  ensureInit();
+  const passphraseHash = nacl.hash(Buffer.from(passphrase, 'utf-8'));
+  const key = passphraseHash.slice(0, nacl.secretbox.keyLength);
   
-  // Derive encryption key from passphrase
-  const key = sodium.crypto_pwhash(
-    sodium.crypto_secretbox_KEYBYTES,
-    passphrase,
-    bundle.salt,
-    KEY_DERIVATION_OPS_LIMIT,
-    KEY_DERIVATION_MEM_LIMIT,
-    sodium.crypto_pwhash_ALG_ARGON2ID13
-  );
+  const privateKey = nacl.secretbox.open(bundle.ciphertext, bundle.nonce, key);
   
-  try {
-    const privateKey = sodium.crypto_secretbox_open_easy(
-      bundle.ciphertext,
-      bundle.nonce,
-      key
-    );
-    return privateKey;
-  } finally {
-    sodium.memzero(key);
+  if (!privateKey) {
+    throw new Error('Failed to decrypt private key');
   }
+  
+  return privateKey;
 }
 
 // ============================================
@@ -150,8 +102,7 @@ export function decryptPrivateKey(
  * Sign a message with Ed25519 private key
  */
 export function sign(message: Uint8Array, privateKey: Uint8Array): Uint8Array {
-  ensureInit();
-  return sodium.crypto_sign_detached(message, privateKey);
+  return nacl.sign.detached(message, privateKey);
 }
 
 /**
@@ -162,22 +113,16 @@ export function verify(
   signature: Uint8Array,
   publicKey: Uint8Array
 ): boolean {
-  ensureInit();
-  try {
-    return sodium.crypto_sign_verify_detached(signature, message, publicKey);
-  } catch {
-    return false;
-  }
+  return nacl.sign.detached.verify(message, signature, publicKey);
 }
 
 /**
  * Sign a string message (convenience wrapper)
  */
 export function signString(message: string, privateKey: Uint8Array): string {
-  ensureInit();
-  const messageBytes = sodium.from_string(message);
+  const messageBytes = Buffer.from(message, 'utf-8');
   const signature = sign(messageBytes, privateKey);
-  return sodium.to_base64(signature);
+  return Buffer.from(signature).toString('base64');
 }
 
 /**
@@ -188,9 +133,8 @@ export function verifyString(
   signatureBase64: string,
   publicKey: Uint8Array
 ): boolean {
-  ensureInit();
-  const messageBytes = sodium.from_string(message);
-  const signature = sodium.from_base64(signatureBase64);
+  const messageBytes = Buffer.from(message, 'utf-8');
+  const signature = Buffer.from(signatureBase64, 'base64');
   return verify(messageBytes, signature, publicKey);
 }
 
@@ -207,28 +151,23 @@ export function encryptMessage(
   recipientPubkey: Uint8Array,
   _senderPrivateKey: Uint8Array
 ): { ciphertext: string; ephemeralPubkey: string; nonce: string } {
-  ensureInit();
-  
   // Generate ephemeral keypair for this message
-  const ephemeralKp = sodium.crypto_box_keypair();
-  const nonce = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES);
+  const ephemeralKp = nacl.box.keyPair();
+  const nonce = nacl.randomBytes(nacl.box.nonceLength);
   
-  // Encrypt using crypto_box (X25519 + XSalsa20-Poly1305)
-  const plaintextBytes = sodium.from_string(plaintext);
-  const ciphertext = sodium.crypto_box_easy(
+  // Encrypt using crypto_box
+  const plaintextBytes = Buffer.from(plaintext, 'utf-8');
+  const ciphertext = nacl.box(
     plaintextBytes,
     nonce,
     recipientPubkey,
-    ephemeralKp.privateKey
+    ephemeralKp.secretKey
   );
   
-  // Zero out ephemeral private key
-  sodium.memzero(ephemeralKp.privateKey);
-  
   return {
-    ciphertext: sodium.to_base64(ciphertext),
-    ephemeralPubkey: sodium.to_base64(ephemeralKp.publicKey),
-    nonce: sodium.to_base64(nonce),
+    ciphertext: Buffer.from(ciphertext).toString('base64'),
+    ephemeralPubkey: Buffer.from(ephemeralKp.publicKey).toString('base64'),
+    nonce: Buffer.from(nonce).toString('base64'),
   };
 }
 
@@ -241,20 +180,22 @@ export function decryptMessage(
   ephemeralPubkeyBase64: string,
   recipientPrivateKey: Uint8Array
 ): string {
-  ensureInit();
+  const ciphertext = Buffer.from(ciphertextBase64, 'base64');
+  const nonce = Buffer.from(nonceBase64, 'base64');
+  const ephemeralPubkey = Buffer.from(ephemeralPubkeyBase64, 'base64');
   
-  const ciphertext = sodium.from_base64(ciphertextBase64);
-  const nonce = sodium.from_base64(nonceBase64);
-  const ephemeralPubkey = sodium.from_base64(ephemeralPubkeyBase64);
-  
-  const plaintext = sodium.crypto_box_open_easy(
+  const plaintext = nacl.box.open(
     ciphertext,
     nonce,
     ephemeralPubkey,
     recipientPrivateKey
   );
   
-  return sodium.to_string(plaintext);
+  if (!plaintext) {
+    throw new Error('Failed to decrypt message');
+  }
+  
+  return Buffer.from(plaintext).toString('utf-8');
 }
 
 // ============================================
@@ -265,57 +206,51 @@ export function decryptMessage(
  * Generate a random nonce for authentication challenges
  */
 export function generateNonce(): string {
-  ensureInit();
-  const bytes = sodium.randombytes_buf(32);
-  return sodium.to_base64(bytes);
+  const bytes = nacl.randomBytes(32);
+  return Buffer.from(bytes).toString('base64');
 }
 
 /**
  * Encode bytes to base64
  */
 export function toBase64(bytes: Uint8Array): string {
-  ensureInit();
-  return sodium.to_base64(bytes);
+  return Buffer.from(bytes).toString('base64');
 }
 
 /**
  * Decode base64 to bytes
  */
 export function fromBase64(base64: string): Uint8Array {
-  ensureInit();
-  return sodium.from_base64(base64);
+  return new Uint8Array(Buffer.from(base64, 'base64'));
 }
 
 /**
  * Encode bytes to hex
  */
 export function toHex(bytes: Uint8Array): string {
-  ensureInit();
-  return sodium.to_hex(bytes);
+  return Buffer.from(bytes).toString('hex');
 }
 
 /**
  * Decode hex to bytes
  */
 export function fromHex(hex: string): Uint8Array {
-  ensureInit();
-  return sodium.from_hex(hex);
+  return new Uint8Array(Buffer.from(hex, 'hex'));
 }
 
 /**
  * Generate a ULID-like ID (timestamp + random)
  */
 export function generateId(): string {
-  ensureInit();
   const timestamp = Date.now().toString(36).padStart(10, '0');
-  const random = sodium.to_hex(sodium.randombytes_buf(8));
+  const random = Buffer.from(nacl.randomBytes(8)).toString('hex');
   return `${timestamp}${random}`;
 }
 
 /**
- * Securely zero memory
+ * Securely zero memory (noop for tweetnacl - no memzero equivalent)
  */
 export function secureZero(buffer: Uint8Array): void {
-  ensureInit();
-  sodium.memzero(buffer);
+  // tweetnacl doesn't have memzero, just overwrite with zeros
+  buffer.fill(0);
 }

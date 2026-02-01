@@ -21,7 +21,7 @@ export interface EncryptedKeyBundle {
   /** Key derivation iterations */
   iterations: number;
   /** Algorithm identifier for future-proofing */
-  algorithm: 'xchacha20-poly1305';
+  algorithm: 'xchacha20-poly1305' | 'xsalsa20-poly1305';
 }
 
 export interface Identity {

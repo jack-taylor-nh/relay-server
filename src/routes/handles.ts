@@ -9,7 +9,7 @@
 import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import { db, handles, identities } from '../db/index.js';
-import { validateHandle, normalizeHandle, verifyString, fromBase64, computeFingerprint, initCrypto } from '../core/index.js';
+import { validateHandle, normalizeHandle, verifyString, fromBase64, computeFingerprint } from '../core/index.js';
 
 export const handleRoutes = new Hono();
 
@@ -17,8 +17,6 @@ export const handleRoutes = new Hono();
  * Claim a handle
  */
 handleRoutes.post('/claim', async (c) => {
-  await initCrypto();
-  
   const body = await c.req.json<{
     handle: string;
     publicKey: string;
@@ -104,8 +102,6 @@ handleRoutes.post('/claim', async (c) => {
  * Release a handle (mark as disabled)
  */
 handleRoutes.delete('/:name', async (c) => {
-  await initCrypto();
-
   const handleName = normalizeHandle(c.req.param('name'));
   
   const body = await c.req.json<{

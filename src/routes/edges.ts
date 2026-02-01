@@ -16,7 +16,7 @@ import { eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
 import { db, edges, identities } from '../db/index.js';
-import { verifyString, fromBase64, computeFingerprint, initCrypto } from '../core/crypto/index.js';
+import { verifyString, fromBase64, computeFingerprint } from '../core/crypto/index.js';
 import type { EdgeType, SecurityLevel } from '../db/schema.js';
 
 export const edgeRoutes = new Hono();
@@ -50,8 +50,6 @@ function generateContactLinkSlug(): string {
  * Create a new edge
  */
 edgeRoutes.post('/', async (c) => {
-  await initCrypto();
-
   const body = await c.req.json<{
     type: EdgeType;
     publicKey: string;
@@ -156,8 +154,6 @@ edgeRoutes.post('/', async (c) => {
  * List edges for identity
  */
 edgeRoutes.get('/', async (c) => {
-  await initCrypto();
-
   const publicKey = c.req.header('X-Relay-PublicKey');
   const signature = c.req.header('X-Relay-Signature');
   const nonce = c.req.header('X-Relay-Nonce');
@@ -237,8 +233,6 @@ edgeRoutes.get('/lookup/:address', async (c) => {
  * Disable an edge
  */
 edgeRoutes.delete('/:id', async (c) => {
-  await initCrypto();
-
   const edgeId = c.req.param('id');
 
   const body = await c.req.json<{
@@ -290,8 +284,6 @@ edgeRoutes.delete('/:id', async (c) => {
  * Update edge (label, policy)
  */
 edgeRoutes.patch('/:id', async (c) => {
-  await initCrypto();
-
   const edgeId = c.req.param('id');
 
   const body = await c.req.json<{

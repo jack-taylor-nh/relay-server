@@ -9,7 +9,7 @@ import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { db, identities, handles, edges } from '../db/index.js';
-import { verifyString, fromBase64, computeFingerprint, initCrypto } from '../core/crypto/index.js';
+import { verifyString, fromBase64, computeFingerprint } from '../core/crypto/index.js';
 
 export const identityRoutes = new Hono();
 
@@ -20,8 +20,6 @@ const DEFAULT_HOME_SERVER = 'userelay.org';
  * Register a new identity
  */
 identityRoutes.post('/register', async (c) => {
-  await initCrypto();
-  
   const body = await c.req.json<{
     publicKey: string;
     nonce: string;
