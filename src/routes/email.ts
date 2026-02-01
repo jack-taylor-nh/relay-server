@@ -102,7 +102,7 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
     receivedAt: string;
   };
   
-  const body: InboundBody = (c.get('workerBody') as InboundBody | undefined) || await c.req.json<InboundBody>();
+  const body: InboundBody = (c as any).get('workerBody') || await c.req.json<InboundBody>();
 
   if (!body.edgeId || !body.identityId || !body.senderHash || !body.encryptedPayload) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
