@@ -34,4 +34,6 @@ yarn-error.log*
 .vscode/
 .idea/
 
+# Internal docs (keep local only)
 RELAY_DEV_HANDOFF.md
+RAILWAY_DEPLOY.md
