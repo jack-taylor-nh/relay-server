@@ -11,6 +11,8 @@ import { Hono } from 'hono';
 import { eq, and, not, isNull, or } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { Resend } from 'resend';
+import nacl from 'tweetnacl';
+import { decodeBase64 } from 'tweetnacl-util';
 import { db, edges, conversations, conversationParticipants, messages, emailMessages } from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 
@@ -70,9 +72,6 @@ async function workerAuthMiddleware(c: any, next: any) {
  */
 function verifySignature(message: string, signatureBase64: string, publicKeyHex: string): boolean {
   try {
-    const nacl = require('tweetnacl');
-    const { decodeBase64 } = require('tweetnacl-util');
-    
     const messageBytes = new TextEncoder().encode(message);
     const signatureBytes = decodeBase64(signatureBase64);
     const publicKeyBytes = hexToBytes(publicKeyHex);
