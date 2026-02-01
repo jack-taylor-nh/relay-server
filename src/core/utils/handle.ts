@@ -2,7 +2,7 @@
  * Handle validation utilities
  */
 
-import { HANDLE_PATTERN, HANDLE_MIN_LENGTH, HANDLE_MAX_LENGTH, RESERVED_HANDLES } from '../constants';
+import { HANDLE_PATTERN, HANDLE_MIN_LENGTH, HANDLE_MAX_LENGTH, RESERVED_HANDLES } from '../constants.js';
 
 export interface HandleValidationResult {
   valid: boolean;
