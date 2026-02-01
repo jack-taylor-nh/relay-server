@@ -310,7 +310,17 @@ edgeRoutes.delete('/:id', async (c) => {
   // Verify ownership
   const publicKey = fromBase64(body.publicKey);
   const messageToSign = `relay-burn-edge:${edgeId}:${body.nonce}`;
+  
+  // Debug logging
+  console.log('[DEBUG] Burn Edge Verification:');
+  console.log('  edgeId:', edgeId);
+  console.log('  nonce:', body.nonce);
+  console.log('  messageToSign:', messageToSign);
+  console.log('  publicKey (base64):', body.publicKey);
+  console.log('  signature (base64):', body.signature);
+  
   const isValid = verifyString(messageToSign, body.signature, publicKey);
+  console.log('  isValid:', isValid);
 
   if (!isValid) {
     return c.json({ code: 'INVALID_SIGNATURE', message: 'Signature verification failed' }, 401);
