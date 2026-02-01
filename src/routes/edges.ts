@@ -12,10 +12,10 @@
  */
 
 import { Hono } from 'hono';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
-import { db, edges, identities } from '../db/index.js';
+import { db, edges, identities, handles } from '../db/index.js';
 import { verifyString, fromBase64, computeFingerprint } from '../core/crypto/index.js';
 import type { EdgeType, SecurityLevel } from '../db/schema.js';
 
@@ -357,6 +357,16 @@ edgeRoutes.post('/:id/burn', async (c) => {
       disabledAt: new Date(),
     })
     .where(eq(edges.id, edgeId));
+
+  // If this is a native edge with an associated handle, also NULL the handle's identityId
+  if (edge.isNative && edge.handleId) {
+    await db
+      .update(handles)
+      .set({
+        identityId: sql`NULL`,  // Unlink handle from identity (untraceable)
+      })
+      .where(eq(handles.id, edge.handleId));
+  }
 
   return c.json({
     message: 'Edge burned and unlinked from identity',
