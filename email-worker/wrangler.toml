@@ -8,15 +8,15 @@ compatibility_date = "2024-01-01"
 # Email routing
 [[email_handlers]]
 enabled = true
-# Route all emails to @relay.sh domain
-# matches = ".*@relay.sh"
+# Route all emails to @rlymsg.com domain
+# matches = ".*@rlymsg\\.com"
 
 # Environment variables (set via wrangler secret)
 [vars]
-API_BASE_URL = "https://api.relay.sh"
+API_BASE_URL = "https://api.rlymsg.com"
 
-# KV namespace for caching alias lookups
+# KV namespace for caching edge lookups
 [[kv_namespaces]]
-binding = "ALIAS_CACHE"
-id = "your-kv-namespace-id"
-preview_id = "your-kv-preview-id"
+binding = "EDGE_CACHE"
+id = "2d66b32c610b482695fafd2974f70c8b"
+preview_id = "3900d1a2439b465d972906983b85b524"
