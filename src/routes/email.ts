@@ -94,13 +94,15 @@ function hexToBytes(hex: string): Uint8Array {
  */
 emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
   // Get body from middleware if signature was verified, otherwise parse fresh
-  const body = c.get('workerBody') || await c.req.json<{
+  type InboundBody = {
     edgeId: string;
     identityId: string;
     senderHash: string;          // Hash for conversation matching
     encryptedPayload: string;    // Entire email encrypted (zero-knowledge)
     receivedAt: string;
-  }>();
+  };
+  
+  const body: InboundBody = (c.get('workerBody') as InboundBody | undefined) || await c.req.json<InboundBody>();
 
   if (!body.edgeId || !body.identityId || !body.senderHash || !body.encryptedPayload) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
