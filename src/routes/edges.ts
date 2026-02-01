@@ -15,9 +15,10 @@ import { Hono } from 'hono';
 import { eq, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
-import { db, edges, identities, handles } from '../db/index.js';
+import { db, edges, identities } from '../db/index.js';
 import { verifyString, fromBase64, computeFingerprint } from '../core/crypto/index.js';
 import { getAvailableEdgeTypes, getEdgeType, validateEdgeAddress } from '../core/edge-types.js';
+import { computeQueryKey } from '../lib/queryKey.js';
 import type { EdgeType, SecurityLevel } from '../db/schema.js';
 
 export const edgeRoutes = new Hono();
@@ -142,17 +143,6 @@ edgeRoutes.post('/', async (c) => {
         displayName: body.displayName || null,
       };
 
-      // For backwards compatibility, also create entry in handles table
-      const handleId = crypto.randomUUID();
-      await db.insert(handles).values({
-        id: handleId,
-        identityId,
-        handle: handleName,
-        displayName: body.displayName || null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
       break;
     }
 
@@ -172,9 +162,13 @@ edgeRoutes.post('/', async (c) => {
   const edgeId = ulid();
   const now = new Date();
 
+  // Compute zero-knowledge query key for edge ownership
+  const ownerQueryKey = computeQueryKey(identityId);
+
   await db.insert(edges).values({
     id: edgeId,
     identityId,
+    ownerQueryKey,
     type: body.type,
     bridgeType: body.type,
     isNative: body.type === 'native',
@@ -221,10 +215,13 @@ edgeRoutes.get('/', async (c) => {
 
   const identityId = computeFingerprint(pubkeyBytes);
 
+  // Use zero-knowledge query key for filtering (server cannot link queryKey → identityId)
+  const ownerQueryKey = computeQueryKey(identityId);
+
   const userEdges = await db
     .select()
     .from(edges)
-    .where(eq(edges.identityId, identityId));
+    .where(eq(edges.ownerQueryKey, ownerQueryKey));
 
   return c.json({
     edges: userEdges.map(edge => ({
@@ -359,16 +356,7 @@ edgeRoutes.post('/:id/burn', async (c) => {
   const publicKey = fromBase64(body.publicKey);
   const messageToSign = `relay-burn-edge:${edgeId}:${body.nonce}`;
   
-  // Debug logging
-  console.log('[DEBUG] Burn Edge Verification:');
-  console.log('  edgeId:', edgeId);
-  console.log('  nonce:', body.nonce);
-  console.log('  messageToSign:', messageToSign);
-  console.log('  publicKey (base64):', body.publicKey);
-  console.log('  signature (base64):', body.signature);
-  
   const isValid = verifyString(messageToSign, body.signature, publicKey);
-  console.log('  isValid:', isValid);
 
   if (!isValid) {
     return c.json({ code: 'INVALID_SIGNATURE', message: 'Signature verification failed' }, 401);
@@ -395,27 +383,18 @@ edgeRoutes.post('/:id/burn', async (c) => {
     return c.json({ code: 'ALREADY_BURNED', message: 'Edge is already burned' }, 400);
   }
 
-  // Burn the edge: NULL identity reference, set status to burned
-  // Metadata (handle name, etc.) stays to prevent collision but becomes anonymous
+  // Burn the edge: NULL all linkable data to make permanently untraceable
+  // Address stays to prevent collision but becomes anonymous
   await db
     .update(edges)
     .set({
-      identityId: sql`NULL`,  // Unlink from identity (untraceable)
-      handleId: sql`NULL`,    // Unlink from handle (backwards compat)
+      ownerQueryKey: sql`NULL`,  // Critical: breaks zero-knowledge query linkage
+      identityId: sql`NULL`,     // Unlink from identity (untraceable)
+      metadata: {},              // Clear encrypted data (handle, displayName, etc.)
       status: 'burned',
       disabledAt: new Date(),
     })
     .where(eq(edges.id, edgeId));
-
-  // For backwards compatibility: if this edge has a handleId, also NULL the handle's identityId
-  if (edge.handleId) {
-    await db
-      .update(handles)
-      .set({
-        identityId: sql`NULL`,
-      })
-      .where(eq(handles.id, edge.handleId));
-  }
 
   return c.json({
     message: 'Edge burned and unlinked from identity',

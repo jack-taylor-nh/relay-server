@@ -84,17 +84,22 @@ messageRoutes.post('/send-native', async (c) => {
       .from(edges)
       .where(and(
         eq(edges.identityId, senderIdentityId),
-        eq(edges.handleId, senderHandleId),
+        // eq(edges.handleId, senderHandleId),  // Deprecated - removed in zero-knowledge refactor
+        eq(edges.address, senderHandle),  // Match by address instead
         eq(edges.isNative, true)
       ))
       .limit(1);
 
     if (senderEdge.length === 0) {
       // Create native edge for sender
+      const { computeQueryKey } = await import('../lib/queryKey.js');
+      const ownerQueryKey = computeQueryKey(senderIdentityId);
+      
       const [newEdge] = await db.insert(edges).values({
         id: randomUUID(),
         identityId: senderIdentityId,
-        handleId: senderHandleId,
+        ownerQueryKey,
+        // handleId: senderHandleId,  // Deprecated - removed in zero-knowledge refactor
         type: 'native',
         bridgeType: 'native',
         isNative: true,
@@ -202,7 +207,7 @@ messageRoutes.post('/send-native', async (c) => {
     }, 201);
 
   } catch (error) {
-    console.error('Error sending native message:', error);
+    console.error('Error sending native message:', { code: (error as any).code, message: 'Failed to send message' });
     return c.json({ error: 'Failed to send message' }, 500);
   }
 });

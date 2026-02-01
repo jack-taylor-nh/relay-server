@@ -88,15 +88,24 @@ export type EdgePolicy = {
 export const edges = pgTable('edges', {
   /** Unique edge ID (ulid) */
   id: text('id').primaryKey(),
-  /** Owner identity ID (nullable when edge is burned for privacy) */
-  identityId: text('identity_id').references(() => identities.id),
-  /** Handle this edge belongs to (nullable when edge is burned for privacy) */
-  handleId: text('handle_id').references(() => handles.id, { onDelete: 'cascade' }),
-  /** Bridge type: email, native, discord, telegram, sms, etc. (NEW) */
+  
+  /** Zero-knowledge owner query key: HMAC-SHA256(identityId, SERVER_SECRET_SALT)
+   * Used for filtering user's edges without revealing identity
+   * NULL when edge is burned (makes it unlinkable)
+   */
+  ownerQueryKey: text('owner_query_key'),
+  
+  /** Owner identity ID - stored for operational queries, nullable for privacy
+   * No foreign key constraint (architectural isolation)
+   * NULL when edge is burned
+   */
+  identityId: text('identity_id'),
+  
+  /** Bridge type: email, native, discord, telegram, sms, etc. */
   bridgeType: text('bridge_type').notNull().default('email'),
-  /** True for native Relay-to-Relay edges (NEW) */
+  /** True for native Relay-to-Relay edges */
   isNative: boolean('is_native').default(false).notNull(),
-  /** Bridge-specific metadata (credentials, config) as encrypted JSON (NEW) */
+  /** Bridge-specific metadata (credentials, config) as encrypted JSON */
   metadata: jsonb('metadata').default({}).notNull(),
   /** Edge type */
   type: text('type').notNull().$type<EdgeType>(),
@@ -123,8 +132,8 @@ export const edges = pgTable('edges', {
   /** Last activity timestamp */
   lastActivityAt: timestamp('last_activity_at', { withTimezone: true }),
 }, (table) => ({
+  ownerQueryKeyIdx: index('edges_owner_query_key_idx').on(table.ownerQueryKey),
   identityIdx: index('edges_identity_idx').on(table.identityId),
-  handleIdx: index('edges_handle_idx').on(table.handleId),
   addressIdx: uniqueIndex('edges_address_idx').on(table.address),
   typeIdx: index('edges_type_idx').on(table.type),
   bridgeTypeIdx: index('edges_bridge_type_idx').on(table.bridgeType),

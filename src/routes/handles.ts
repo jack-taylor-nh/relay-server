@@ -50,10 +50,14 @@ handleRoutes.post('/', authMiddleware, async (c) => {
 
     // Auto-create native edge for this handle
     const { ulid } = await import('ulid');
+    const { computeQueryKey } = await import('../lib/queryKey.js');
+    const ownerQueryKey = computeQueryKey(identityId);
+    
     const [nativeEdge] = await db.insert(edges).values({
       id: ulid(),
       identityId,
-      handleId: newHandle.id,
+      ownerQueryKey,
+      // handleId: newHandle.id,  // Deprecated - removed in zero-knowledge refactor
       type: 'native',
       bridgeType: 'native',
       isNative: true,
@@ -103,7 +107,8 @@ handleRoutes.get('/', authMiddleware, async (c) => {
       })
       .from(handles)
       .leftJoin(edges, and(
-        eq(edges.handleId, handles.id),
+        // eq(edges.handleId, handles.id),  // Deprecated - removed in zero-knowledge refactor
+        eq(edges.address, handles.handle),  // Match by address instead
         eq(edges.isNative, true)
       ))
       .where(eq(handles.identityId, identityId));
