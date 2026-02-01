@@ -99,6 +99,8 @@ export const edges = pgTable('edges', {
   status: text('status').notNull().$type<EdgeStatus>().default('active'),
   /** Security level for conversations through this edge */
   securityLevel: text('security_level').notNull().$type<SecurityLevel>(),
+  /** X25519 encryption public key (for email encryption, derived from Ed25519 signing key) */
+  x25519PublicKey: text('x25519_public_key'),
   /** When edge was created */
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   /** When edge was disabled (if applicable) */

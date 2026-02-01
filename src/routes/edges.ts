@@ -15,28 +15,14 @@ import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
-import nacl from 'tweetnacl';
 import { db, edges, identities } from '../db/index.js';
-import { verifyString, fromBase64, computeFingerprint, toBase64 } from '../core/crypto/index.js';
+import { verifyString, fromBase64, computeFingerprint } from '../core/crypto/index.js';
 import type { EdgeType, SecurityLevel } from '../db/schema.js';
 
 export const edgeRoutes = new Hono();
 
 // Email domain for aliases
 const EMAIL_DOMAIN = 'rlymsg.com';
-
-/**
- * Convert Ed25519 signing public key to X25519 encryption public key
- * This is needed for email encryption - we derive the X25519 key from the Ed25519 signing key
- */
-function ed25519PublicKeyToX25519(ed25519PublicKey: Uint8Array): Uint8Array {
-  // For Ed25519->X25519 conversion, we hash the public key to get the seed
-  // then derive a box keypair from it. This matches the client-side derivation.
-  const hash = nacl.hash(ed25519PublicKey);
-  const seed = hash.slice(0, 32);
-  const x25519KeyPair = nacl.box.keyPair.fromSecretKey(seed);
-  return x25519KeyPair.publicKey;
-}
 
 /**
  * Generate a random email alias
@@ -67,6 +53,7 @@ edgeRoutes.post('/', async (c) => {
   const body = await c.req.json<{
     type: EdgeType;
     publicKey: string;
+    x25519PublicKey: string;  // For email encryption
     nonce: string;
     signature: string;
     label?: string;
@@ -150,6 +137,7 @@ edgeRoutes.post('/', async (c) => {
     label: body.label,
     status: 'active',
     securityLevel,
+    x25519PublicKey: body.x25519PublicKey || null,
     createdAt: now,
   });
 
@@ -219,10 +207,9 @@ edgeRoutes.get('/lookup/:address', async (c) => {
       type: edges.type,
       status: edges.status,
       securityLevel: edges.securityLevel,
-      publicKey: identities.publicKey,
+      x25519PublicKey: edges.x25519PublicKey,
     })
     .from(edges)
-    .innerJoin(identities, eq(edges.identityId, identities.id))
     .where(eq(edges.address, address))
     .limit(1);
 
@@ -234,16 +221,16 @@ edgeRoutes.get('/lookup/:address', async (c) => {
     return c.json({ code: 'EDGE_DISABLED', message: 'Edge is disabled' }, 410);
   }
 
-  // Convert Ed25519 signing public key to X25519 encryption public key
-  const ed25519PublicKey = fromBase64(edge.publicKey);
-  const x25519PublicKey = ed25519PublicKeyToX25519(ed25519PublicKey);
+  if (!edge.x25519PublicKey) {
+    return c.json({ code: 'MISSING_ENCRYPTION_KEY', message: 'Edge missing encryption key - please recreate' }, 500);
+  }
 
   return c.json({
     id: edge.id,
     identityId: edge.identityId,
     type: edge.type,
     securityLevel: edge.securityLevel,
-    publicKey: toBase64(x25519PublicKey),  // Return X25519 key for encryption
+    publicKey: edge.x25519PublicKey,  // Use stored X25519 key
   });
 });
 
