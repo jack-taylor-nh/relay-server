@@ -20,11 +20,16 @@ handleRoutes.post('/', authMiddleware, async (c) => {
   const identityId = c.get('identityId') as string;
   const body = await c.req.json();
 
-  const { handle, displayName } = body;
+  const { handle, displayName, x25519PublicKey } = body;
 
   // Validate handle format
   if (!handle || typeof handle !== 'string') {
     return c.json({ error: 'Handle is required' }, 400);
+  }
+
+  // Validate x25519PublicKey
+  if (!x25519PublicKey || typeof x25519PublicKey !== 'string') {
+    return c.json({ error: 'x25519PublicKey is required for edge encryption' }, 400);
   }
 
   // Handle validation: alphanumeric, underscores, hyphens, 3-32 chars, lowercase
@@ -64,6 +69,7 @@ handleRoutes.post('/', authMiddleware, async (c) => {
       address: handle,  // Native edge address is the handle
       status: 'active',
       securityLevel: 'e2ee',
+      x25519PublicKey,  // Store edge-level encryption key
       metadata: {},
       createdAt: now,
       messageCount: 0,
@@ -136,6 +142,8 @@ handleRoutes.post('/resolve', async (c) => {
         handle: edges.address,
         displayName: sql<string>`${edges.metadata}->>'displayName'`,
         publicKey: identities.publicKey,
+        x25519PublicKey: edges.x25519PublicKey,  // Edge-level encryption key
+        edgeId: edges.id,
         createdAt: edges.createdAt,
       })
       .from(edges)
@@ -157,6 +165,8 @@ handleRoutes.post('/resolve', async (c) => {
       handle: resolved.handle,
       displayName: resolved.displayName,
       publicKey: resolved.publicKey,
+      x25519PublicKey: resolved.x25519PublicKey,
+      edgeId: resolved.edgeId,
       createdAt: resolved.createdAt,
     });
   } catch (error) {
@@ -184,6 +194,8 @@ handleRoutes.get('/:handle', async (c) => {
         handle: edges.address,
         displayName: sql<string>`${edges.metadata}->>'displayName'`,
         publicKey: identities.publicKey,
+        x25519PublicKey: edges.x25519PublicKey,  // Edge-level encryption key
+        edgeId: edges.id,
         createdAt: edges.createdAt,
       })
       .from(edges)
@@ -205,6 +217,8 @@ handleRoutes.get('/:handle', async (c) => {
       handle: resolved.handle,
       displayName: resolved.displayName,
       publicKey: resolved.publicKey,
+      x25519PublicKey: resolved.x25519PublicKey,
+      edgeId: resolved.edgeId,
       createdAt: resolved.createdAt,
     });
   } catch (error) {

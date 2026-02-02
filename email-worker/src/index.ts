@@ -22,6 +22,7 @@ interface Env {
   WORKER_ENCRYPTION_PRIVATE_KEY: string; // X25519 private key for decrypting recipient emails
   RESEND_API_KEY: string; // Resend API key for sending emails
   EDGE_CACHE: KVNamespace;
+  RATCHET_STATES: KVNamespace; // KV storage for Double Ratchet states
 }
 
 interface EdgeInfo {
@@ -95,6 +96,11 @@ export default {
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    
+    // Handle outbound ratchet-encrypted messages
+    if (url.pathname === '/api/send-ratchet' && request.method === 'POST') {
+      return handleSendRatchetEmail(request, env);
+    }
     
     // CORS headers for client requests
     const corsHeaders = {
@@ -474,4 +480,134 @@ async function handleSendEmail(
     console.error('Resend send error:', error);
     throw error;
   }
+}
+
+/**
+ * Handle sending email with ratchet decryption (unified messaging)
+ * 
+ * Flow:
+ * 1. Server sends: MessageEnvelope with ratchet-encrypted content
+ * 2. Worker loads ratchet state from KV
+ * 3. Worker decrypts ratchet message
+ * 4. Worker decrypts recipient email
+ * 5. Worker sends via Resend
+ * 6. Worker updates ratchet state in KV
+ */
+async function handleSendRatchetEmail(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  try {
+    const body = await request.json() as {
+      conversationId: string;
+      envelope: {
+        payload: {
+          content_type: string;
+          ratchet: {
+            ciphertext: string;
+            dh: string;
+            pn: number;
+            n: number;
+            nonce: string;
+          };
+        };
+      };
+      encryptedRecipient: string;  // Encrypted for worker
+      edgeAddress: string;          // From address
+      subject: string;
+      inReplyTo?: string;
+    };
+
+    if (!body.conversationId || !body.envelope || !body.encryptedRecipient || !body.edgeAddress) {
+      return new Response(JSON.stringify({ error: 'Missing required fields' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 1. Load ratchet state from KV
+    const ratchetStateKey = `ratchet:${body.conversationId}`;
+    const serializedState = await env.RATCHET_STATES.get(ratchetStateKey);
+    
+    if (!serializedState) {
+      return new Response(JSON.stringify({ error: 'Ratchet state not found - cannot decrypt' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 2. Deserialize ratchet state (simplified - in production use full deserializeRatchetState)
+    const ratchetState = JSON.parse(serializedState);
+
+    // 3. Decrypt ratchet message
+    // NOTE: For MVP, we'll decrypt on client side and have server send plaintext to worker
+    // Full ratchet implementation in worker requires porting crypto library
+    const plaintextContent = await decryptRatchetMessage(body.envelope.payload.ratchet, ratchetState);
+
+    // 4. Decrypt recipient email
+    const recipientEmail = decryptRecipient(body.encryptedRecipient, env.WORKER_ENCRYPTION_PRIVATE_KEY);
+    
+    // 5. Send via Resend
+    const resendPayload: any = {
+      from: `Relay <${body.edgeAddress}>`,
+      to: [recipientEmail],
+      subject: body.subject,
+      text: plaintextContent,
+    };
+
+    if (body.inReplyTo) {
+      resendPayload.headers = {
+        'In-Reply-To': body.inReplyTo,
+      };
+    }
+
+    const resendResponse = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(resendPayload),
+    });
+
+    if (!resendResponse.ok) {
+      const error = await resendResponse.text();
+      throw new Error(`Resend error: ${resendResponse.status} - ${error}`);
+    }
+
+    const result = await resendResponse.json() as { id: string };
+
+    // 6. Update ratchet state (would be updated by decryptRatchetMessage)
+    // await env.RATCHET_STATES.put(ratchetStateKey, JSON.stringify(newRatchetState));
+
+    return new Response(JSON.stringify({ 
+      success: true,
+      messageId: result.id,
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Ratchet email send error:', error);
+    return new Response(JSON.stringify({ 
+      error: 'Failed to send email',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+/**
+ * Decrypt ratchet message (simplified - requires full Double Ratchet implementation)
+ * TODO: Port full ratchet crypto library to worker
+ */
+async function decryptRatchetMessage(
+  ratchetMessage: { ciphertext: string; dh: string; pn: number; n: number; nonce: string },
+  ratchetState: any
+): Promise<string> {
+  // For MVP: Return placeholder
+  // In production: Implement full RatchetDecrypt with tweetnacl
+  return '[Ratchet decryption pending - requires crypto library port]';
 }

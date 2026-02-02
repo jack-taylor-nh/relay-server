@@ -20,3 +20,9 @@ API_BASE_URL = "https://api.rlymsg.com"
 binding = "EDGE_CACHE"
 id = "2d66b32c610b482695fafd2974f70c8b"
 preview_id = "3900d1a2439b465d972906983b85b524"
+
+# KV namespace for Double Ratchet state storage
+[[kv_namespaces]]
+binding = "RATCHET_STATES"
+id = "ratchet-states-prod"
+preview_id = "ratchet-states-preview"

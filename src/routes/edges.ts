@@ -184,7 +184,7 @@ edgeRoutes.post('/', async (c) => {
   return c.json({
     id: edgeId,
     type: body.type,
-    address: body.type === 'native' ? `@${address}` : address,
+    address: body.type === 'native' ? address : address,
     label: body.label,
     status: 'active',
     securityLevel: edgeType.securityLevel,
@@ -227,7 +227,7 @@ edgeRoutes.get('/', async (c) => {
     edges: userEdges.map(edge => ({
       id: edge.id,
       type: edge.type,
-      address: edge.isNative ? `@${edge.address}` : edge.address,
+      address: edge.isNative ? edge.address : edge.address,
       label: edge.label,
       status: edge.status,
       securityLevel: edge.securityLevel,

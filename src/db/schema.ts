@@ -172,6 +172,8 @@ export const conversations = pgTable('conversations', {
   securityLevel: text('security_level').notNull().$type<ConversationSecurityLevel>(),
   /** User-friendly label for the channel (e.g., "Relayed via Email") */
   channelLabel: text('channel_label'),
+  /** Double Ratchet state for E2EE conversations (JSONB) */
+  ratchetState: jsonb('ratchet_state'),
   /** When conversation was created */
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   /** Last activity timestamp (for sorting) */
