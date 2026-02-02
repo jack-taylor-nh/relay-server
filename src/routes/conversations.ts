@@ -9,7 +9,7 @@
 import { Hono } from 'hono';
 import { eq, desc, and, lt, sql, inArray } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import { db, conversations, conversationParticipants, messages, edges, type SecurityLevel } from '../db/index.js';
+import { db, conversations, conversationParticipants, messages, edges, handles, type SecurityLevel } from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { DEFAULT_PAGE_SIZE } from '../core/constants.js';
 
@@ -86,6 +86,19 @@ conversationRoutes.get('/', async (c) => {
       // Find counterparty
       const counterparty = parts.find(p => p.identityId !== identityId);
       
+      // For native conversations, get counterparty's handle
+      let counterpartyHandle = null;
+      if (conv.origin === 'native' && counterparty?.identityId) {
+        const [handleResult] = await db
+          .select({ handle: handles.handle, displayName: handles.displayName })
+          .from(handles)
+          .where(eq(handles.identityId, counterparty.identityId))
+          .limit(1);
+        if (handleResult) {
+          counterpartyHandle = handleResult.handle;
+        }
+      }
+      
       return {
         id: conv.id,
         origin: conv.origin,
@@ -101,6 +114,7 @@ conversationRoutes.get('/', async (c) => {
           identityId: counterparty.identityId,
           externalId: counterparty.externalId,
           displayName: counterparty.displayName,
+          handle: counterpartyHandle,
         } : null,
         lastActivityAt: conv.lastActivityAt.toISOString(),
         createdAt: conv.createdAt.toISOString(),
