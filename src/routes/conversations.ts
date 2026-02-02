@@ -91,35 +91,25 @@ conversationRoutes.get('/', async (c) => {
       let counterpartyEdgeId = null;
       let counterpartyX25519Key = null;
       if (conv.origin === 'native' && counterparty?.identityId) {
-        // Get handle info
-        const [handleResult] = await db
+        // Look up native edge directly (not via handles table, since edges are the source of truth)
+        const [edgeResult] = await db
           .select({ 
-            handle: handles.handle, 
-            displayName: handles.displayName,
+            id: edges.id,
+            address: edges.address,
+            x25519PublicKey: edges.x25519PublicKey,
+            displayName: sql<string>`${edges.metadata}->>'displayName'`,
           })
-          .from(handles)
-          .where(eq(handles.identityId, counterparty.identityId))
+          .from(edges)
+          .where(and(
+            eq(edges.identityId, counterparty.identityId),
+            eq(edges.type, 'native'),
+            eq(edges.status, 'active')
+          ))
           .limit(1);
-        if (handleResult) {
-          counterpartyHandle = handleResult.handle;
-          
-          // Find the native edge for this handle (address matches handle name)
-          const [edgeResult] = await db
-            .select({ 
-              id: edges.id,
-              x25519PublicKey: edges.x25519PublicKey 
-            })
-            .from(edges)
-            .where(and(
-              eq(edges.type, 'native'),
-              eq(edges.address, handleResult.handle),
-              eq(edges.status, 'active')
-            ))
-            .limit(1);
-          if (edgeResult) {
-            counterpartyEdgeId = edgeResult.id;
-            counterpartyX25519Key = edgeResult.x25519PublicKey;
-          }
+        if (edgeResult) {
+          counterpartyHandle = edgeResult.address;
+          counterpartyEdgeId = edgeResult.id;
+          counterpartyX25519Key = edgeResult.x25519PublicKey;
         }
       }
       
