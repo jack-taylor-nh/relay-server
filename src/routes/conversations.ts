@@ -106,11 +106,25 @@ conversationRoutes.get('/', async (c) => {
             eq(edges.status, 'active')
           ))
           .limit(1);
+        
+        console.log('[DEBUG] Counterparty edge lookup:', {
+          convId: conv.id,
+          counterpartyIdentityId: counterparty.identityId,
+          edgeResult: edgeResult ? { id: edgeResult.id, address: edgeResult.address, hasX25519: !!edgeResult.x25519PublicKey } : null,
+        });
+        
         if (edgeResult) {
           counterpartyHandle = edgeResult.address;
           counterpartyEdgeId = edgeResult.id;
           counterpartyX25519Key = edgeResult.x25519PublicKey;
         }
+      } else {
+        console.log('[DEBUG] Skipping counterparty lookup:', {
+          convId: conv.id,
+          origin: conv.origin,
+          hasCounterparty: !!counterparty,
+          counterpartyIdentityId: counterparty?.identityId,
+        });
       }
       
       return {
