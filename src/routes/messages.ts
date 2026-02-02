@@ -192,7 +192,7 @@ messageRoutes.post('/', async (c) => {
 
       // Check for existing conversation between these two edges (preferred)
       // or between these two identities (fallback)
-      let existingConversationId: string | null = null;
+      let existingConversationId: string | undefined = undefined;
       
       // First try edge-based lookup
       if (recipientEdgeId) {
@@ -272,7 +272,7 @@ messageRoutes.post('/', async (c) => {
           {
             conversationId,
             identityId: recipientIdentityId,
-            edgeId: recipientEdgeId,
+            edgeId: recipientEdgeId ?? undefined,
             isOwner: false,
             joinedAt: now,
           },
