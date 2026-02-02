@@ -233,6 +233,7 @@ edgeRoutes.get('/', async (c) => {
       securityLevel: edge.securityLevel,
       messageCount: edge.messageCount,
       metadata: edge.metadata, // Includes handle/displayName for native edges
+      hasX25519: !!edge.x25519PublicKey, // Client can check if migration needed
       createdAt: edge.createdAt.toISOString(),
       lastActivityAt: edge.lastActivityAt?.toISOString() || null,
     })),
@@ -404,7 +405,7 @@ edgeRoutes.post('/:id/burn', async (c) => {
 });
 
 /**
- * Update edge (label, policy)
+ * Update edge (label, policy, x25519PublicKey)
  */
 edgeRoutes.patch('/:id', async (c) => {
   const edgeId = c.req.param('id');
@@ -415,6 +416,7 @@ edgeRoutes.patch('/:id', async (c) => {
     signature: string;
     label?: string;
     policy?: object;
+    x25519PublicKey?: string;  // Can be set once if missing
   }>();
 
   if (!body.publicKey || !body.nonce || !body.signature) {
@@ -451,11 +453,24 @@ edgeRoutes.patch('/:id', async (c) => {
   const updates: Partial<typeof edge> = {};
   if (body.label !== undefined) updates.label = body.label;
   if (body.policy !== undefined) updates.policy = body.policy as any;
+  
+  // Allow setting X25519 key if not already set (one-time migration for old edges)
+  if (body.x25519PublicKey !== undefined) {
+    if (edge.x25519PublicKey && edge.x25519PublicKey !== body.x25519PublicKey) {
+      // Don't allow changing existing key (security measure)
+      console.log(`[Edge Update] Ignoring x25519 change for edge ${edgeId} - key already set`);
+    } else {
+      updates.x25519PublicKey = body.x25519PublicKey;
+      console.log(`[Edge Update] Setting x25519 for edge ${edgeId}`);
+    }
+  }
 
-  await db
-    .update(edges)
-    .set(updates)
-    .where(eq(edges.id, edgeId));
+  if (Object.keys(updates).length > 0) {
+    await db
+      .update(edges)
+      .set(updates)
+      .where(eq(edges.id, edgeId));
+  }
 
   return c.json({ message: 'Edge updated', id: edgeId, ...updates });
 });
