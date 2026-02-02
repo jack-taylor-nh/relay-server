@@ -83,17 +83,36 @@ conversationRoutes.get('/', async (c) => {
         edge = edgeResult || null;
       }
 
-      // Find counterparty
+      // Find counterparty (not the current user)
       const counterparty = parts.find(p => p.identityId !== identityId);
       
-      // For native conversations, get counterparty's handle and edge info
+      // Get counterparty's edge info
       let counterpartyHandle = null;
       let counterpartyEdgeId = null;
       let counterpartyX25519Key = null;
-      if (conv.origin === 'native' && counterparty?.identityId) {
-        // Look up native edge directly (not via handles table, since edges are the source of truth)
-        // Order by x25519PublicKey to prefer edges with encryption keys (proper handle edges)
-        // over legacy auto-created edges (which have address = identityId and no x25519)
+      
+      // First try: Use edge ID stored in participant (new model)
+      if (counterparty?.edgeId) {
+        const [edgeResult] = await db
+          .select({ 
+            id: edges.id,
+            address: edges.address,
+            x25519PublicKey: edges.x25519PublicKey,
+            displayName: sql<string>`${edges.metadata}->>'displayName'`,
+          })
+          .from(edges)
+          .where(eq(edges.id, counterparty.edgeId))
+          .limit(1);
+        
+        if (edgeResult) {
+          counterpartyHandle = edgeResult.address;
+          counterpartyEdgeId = edgeResult.id;
+          counterpartyX25519Key = edgeResult.x25519PublicKey;
+        }
+      }
+      
+      // Fallback: Look up by identity ID (legacy)
+      if (!counterpartyEdgeId && conv.origin === 'native' && counterparty?.identityId) {
         const [edgeResult] = await db
           .select({ 
             id: edges.id,
@@ -110,25 +129,16 @@ conversationRoutes.get('/', async (c) => {
           .orderBy(sql`CASE WHEN ${edges.x25519PublicKey} IS NOT NULL THEN 0 ELSE 1 END`)
           .limit(1);
         
-        console.log('[DEBUG] Counterparty edge lookup:', {
-          convId: conv.id,
-          counterpartyIdentityId: counterparty.identityId,
-          edgeResult: edgeResult ? { id: edgeResult.id, address: edgeResult.address, hasX25519: !!edgeResult.x25519PublicKey } : null,
-        });
-        
         if (edgeResult) {
           counterpartyHandle = edgeResult.address;
           counterpartyEdgeId = edgeResult.id;
           counterpartyX25519Key = edgeResult.x25519PublicKey;
         }
-      } else {
-        console.log('[DEBUG] Skipping counterparty lookup:', {
-          convId: conv.id,
-          origin: conv.origin,
-          hasCounterparty: !!counterparty,
-          counterpartyIdentityId: counterparty?.identityId,
-        });
       }
+      
+      // Find my edge in this conversation
+      const myParticipation = parts.find(p => p.identityId === identityId);
+      const myEdgeId = myParticipation?.edgeId || conv.edgeId;
       
       return {
         id: conv.id,
@@ -142,6 +152,7 @@ conversationRoutes.get('/', async (c) => {
           label: edge.label,
           status: edge.status,
         } : null,
+        myEdgeId,  // Include my edge ID for ratchet keying
         counterparty: counterparty ? {
           identityId: counterparty.identityId,
           externalId: counterparty.externalId,

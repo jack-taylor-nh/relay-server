@@ -3,13 +3,16 @@
  * 
  * POST /v1/handles - Create a new handle
  * GET /v1/handles - List all handles for authenticated user
- * GET /v1/handles/:handle - Resolve handle to public key (public)
+ * GET /v1/handles/:handle - Resolve handle to public key (DEPRECATED)
+ * POST /v1/handles/resolve - Resolve handle (DEPRECATED)
+ * 
+ * NOTE: For new code, use POST /v1/edge/resolve instead
  */
 
 import { Hono } from 'hono';
 import { eq, and, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { handles, identities, edges } from '../db/schema.js';
+import { handles, edges } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { randomUUID } from 'crypto';
 
@@ -126,8 +129,13 @@ handleRoutes.get('/', authMiddleware, async (c) => {
   }
 });
 
-// POST /v1/handles/resolve - Resolve handle to public key (preferred, handle in body)
+// POST /v1/handles/resolve - Resolve handle to public key
+// @deprecated Use POST /v1/edge/resolve with { type: 'native', address: handle } instead
+// SECURITY: This endpoint has been updated to NOT return identity public key
 handleRoutes.post('/resolve', async (c) => {
+  // Add deprecation header
+  c.header('X-Deprecated', 'Use POST /v1/edge/resolve instead');
+  
   try {
     const body = await c.req.json<{ handle: string }>();
     const handle = body.handle?.trim().toLowerCase();
@@ -136,18 +144,16 @@ handleRoutes.post('/resolve', async (c) => {
       return c.json({ error: 'Handle is required' }, 400);
     }
 
-    // Query edges table for native edge (handle)
+    // Query edges table for native edge (handle) - NO identity join
     const result = await db
       .select({
         handle: edges.address,
         displayName: sql<string>`${edges.metadata}->>'displayName'`,
-        publicKey: identities.publicKey,
         x25519PublicKey: edges.x25519PublicKey,  // Edge-level encryption key
         edgeId: edges.id,
         createdAt: edges.createdAt,
       })
       .from(edges)
-      .innerJoin(identities, eq(edges.identityId, identities.id))
       .where(and(
         eq(edges.address, handle),
         eq(edges.type, 'native'),
@@ -161,13 +167,14 @@ handleRoutes.post('/resolve', async (c) => {
 
     const resolved = result[0];
 
+    // Return ONLY edge data - NO identity public key
     return c.json({
       handle: resolved.handle,
       displayName: resolved.displayName,
-      publicKey: resolved.publicKey,
       x25519PublicKey: resolved.x25519PublicKey,
       edgeId: resolved.edgeId,
       createdAt: resolved.createdAt,
+      // NOTE: publicKey (identity key) intentionally NOT returned for privacy
     });
   } catch (error) {
     console.error('Error resolving handle:', {
@@ -178,9 +185,14 @@ handleRoutes.post('/resolve', async (c) => {
   }
 });
 
-// GET /v1/handles/:handle - Resolve handle to public key (DEPRECATED: use POST /resolve)
+// GET /v1/handles/:handle - Resolve handle to public key
+// @deprecated Use POST /v1/edge/resolve instead
 // ⚠️ SECURITY: Handle appears in URL path and server logs
+// SECURITY: Updated to NOT return identity public key
 handleRoutes.get('/:handle', async (c) => {
+  // Add deprecation header
+  c.header('X-Deprecated', 'Use POST /v1/edge/resolve instead');
+  
   const handle = c.req.param('handle');
 
   if (!handle) {
@@ -188,18 +200,16 @@ handleRoutes.get('/:handle', async (c) => {
   }
 
   try {
-    // Query edges table for native edge (handle)
+    // Query edges table for native edge (handle) - NO identity join
     const result = await db
       .select({
         handle: edges.address,
         displayName: sql<string>`${edges.metadata}->>'displayName'`,
-        publicKey: identities.publicKey,
         x25519PublicKey: edges.x25519PublicKey,  // Edge-level encryption key
         edgeId: edges.id,
         createdAt: edges.createdAt,
       })
       .from(edges)
-      .innerJoin(identities, eq(edges.identityId, identities.id))
       .where(and(
         eq(edges.address, handle),
         eq(edges.type, 'native'),
@@ -213,13 +223,14 @@ handleRoutes.get('/:handle', async (c) => {
 
     const resolved = result[0];
 
+    // Return ONLY edge data - NO identity public key
     return c.json({
       handle: resolved.handle,
       displayName: resolved.displayName,
-      publicKey: resolved.publicKey,
       x25519PublicKey: resolved.x25519PublicKey,
       edgeId: resolved.edgeId,
       createdAt: resolved.createdAt,
+      // NOTE: publicKey (identity key) intentionally NOT returned for privacy
     });
   } catch (error) {
     console.error('Error resolving handle:', {

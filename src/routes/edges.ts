@@ -4,15 +4,16 @@
  * Unified management of all contact surfaces (edges)
  * 
  * POST /v1/edge - Create a new edge
+ * POST /v1/edge/resolve - Unified edge resolution (preferred)
  * GET /v1/edges - List edges for identity
  * GET /v1/edge/:id - Get edge details
  * PATCH /v1/edge/:id - Update edge (status, label, policy)
  * DELETE /v1/edge/:id - Disable an edge
- * GET /v1/edge/lookup/:address - Lookup edge by address (for email worker)
+ * GET /v1/edge/lookup/:address - Lookup edge by address (DEPRECATED: use resolve)
  */
 
 import { Hono } from 'hono';
-import { eq, sql } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
 import { db, edges, identities } from '../db/index.js';
@@ -32,6 +33,139 @@ const EMAIL_DOMAIN = 'rlymsg.com';
 edgeRoutes.get('/types', async (c) => {
   const types = getAvailableEdgeTypes();
   return c.json({ types });
+});
+
+/**
+ * POST /v1/edge/resolve - Unified edge resolution
+ * 
+ * Resolves any edge type to its encryption key.
+ * Returns ONLY edge data - NO identity information.
+ * 
+ * Supports:
+ * - native: Handle lookup (address = handle name)
+ * - email: Email alias lookup (address = alias@rlymsg.com)
+ * - contact_link: Contact link lookup (address = slug)
+ * - bridge: Bridge edge lookup (address = bridge name, e.g., "email")
+ */
+edgeRoutes.post('/resolve', async (c) => {
+  try {
+    const body = await c.req.json<{ 
+      type: EdgeType | 'bridge';
+      address: string;
+    }>();
+
+    const type = body.type;
+    const address = body.address?.trim().toLowerCase();
+
+    if (!type || !address) {
+      return c.json({ 
+        code: 'VALIDATION_ERROR', 
+        message: 'Both type and address are required' 
+      }, 400);
+    }
+
+    // Handle bridge edge resolution (special case)
+    if (type === 'bridge') {
+      // Bridge edges are well-known edges with static X25519 keys
+      // The bridge public key is stored in the database as a special edge
+      
+      // Look up bridge edge by address (e.g., "email")
+      const bridgeResult = await db
+        .select({
+          edgeId: edges.id,
+          address: edges.address,
+          type: edges.type,
+          status: edges.status,
+          securityLevel: edges.securityLevel,
+          x25519PublicKey: edges.x25519PublicKey,
+        })
+        .from(edges)
+        .where(and(
+          eq(edges.address, address),
+          eq(edges.type, 'bridge' as EdgeType),
+          eq(edges.status, 'active')
+        ))
+        .limit(1);
+
+      if (bridgeResult.length > 0 && bridgeResult[0].x25519PublicKey) {
+        return c.json({
+          edgeId: bridgeResult[0].edgeId,
+          type: 'bridge',
+          status: bridgeResult[0].status,
+          securityLevel: bridgeResult[0].securityLevel,
+          x25519PublicKey: bridgeResult[0].x25519PublicKey,
+          displayName: `${address.charAt(0).toUpperCase() + address.slice(1)} Bridge`,
+        });
+      }
+
+      // Fallback: For "email" bridge, provide the worker endpoint
+      // This allows gradual migration - clients can fetch from worker directly
+      if (address === 'email') {
+        return c.json({
+          code: 'BRIDGE_REDIRECT',
+          message: 'Bridge public key not yet stored in database. Use worker endpoint.',
+          workerUrl: 'https://relay-email-worker.taylor-d-jack.workers.dev/public-key',
+        }, 307);
+      }
+      
+      return c.json({ 
+        code: 'UNKNOWN_BRIDGE', 
+        message: `Unknown bridge: ${address}` 
+      }, 404);
+    }
+
+    // Query edge by type and address
+    const result = await db
+      .select({
+        edgeId: edges.id,
+        address: edges.address,
+        type: edges.type,
+        status: edges.status,
+        securityLevel: edges.securityLevel,
+        x25519PublicKey: edges.x25519PublicKey,
+        displayName: sql<string>`${edges.metadata}->>'displayName'`,
+      })
+      .from(edges)
+      .where(and(
+        eq(edges.address, address),
+        eq(edges.type, type),
+        eq(edges.status, 'active')
+      ))
+      .limit(1);
+
+    if (result.length === 0) {
+      return c.json({ 
+        code: 'EDGE_NOT_FOUND', 
+        message: `${type} edge not found: ${address}` 
+      }, 404);
+    }
+
+    const edge = result[0];
+
+    if (!edge.x25519PublicKey) {
+      return c.json({ 
+        code: 'MISSING_ENCRYPTION_KEY', 
+        message: 'Edge missing encryption key' 
+      }, 500);
+    }
+
+    // Return ONLY edge data - NO identity information
+    return c.json({
+      edgeId: edge.edgeId,
+      type: edge.type,
+      status: edge.status,
+      securityLevel: edge.securityLevel,
+      x25519PublicKey: edge.x25519PublicKey,
+      displayName: edge.displayName || null,
+    });
+
+  } catch (error) {
+    console.error('Error resolving edge:', error);
+    return c.json({ 
+      code: 'INTERNAL_ERROR', 
+      message: 'Failed to resolve edge' 
+    }, 500);
+  }
 });
 
 /**
@@ -242,8 +376,12 @@ edgeRoutes.get('/', async (c) => {
 
 /**
  * Lookup edge by address (for email worker, public endpoint)
+ * @deprecated Use POST /v1/edge/resolve instead
  */
 edgeRoutes.get('/lookup/:address', async (c) => {
+  // Add deprecation header
+  c.header('X-Deprecated', 'Use POST /v1/edge/resolve instead');
+  
   const address = c.req.param('address');
 
   const [edge] = await db

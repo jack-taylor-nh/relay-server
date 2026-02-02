@@ -96,6 +96,7 @@ messageRoutes.post('/', async (c) => {
 
     let conversationId = body.conversation_id;
     let recipientIdentityId: string | null = null;
+    let recipientEdgeId: string | null = null;
     let isNewConversation = false;
 
     // 2. Handle conversation - either find existing or create new
@@ -111,14 +112,29 @@ messageRoutes.post('/', async (c) => {
         return c.json({ error: 'Conversation not found' }, 404);
       }
 
-      const [participation] = await db
+      // Check by edge ID first (new model), fallback to identity ID
+      let participation = await db
         .select()
         .from(conversationParticipants)
         .where(and(
           eq(conversationParticipants.conversationId, conversationId),
-          eq(conversationParticipants.identityId, senderIdentityId)
+          eq(conversationParticipants.edgeId, body.edge_id)
         ))
-        .limit(1);
+        .limit(1)
+        .then(r => r[0]);
+
+      if (!participation) {
+        // Fallback to identity-based check (for backwards compat)
+        participation = await db
+          .select()
+          .from(conversationParticipants)
+          .where(and(
+            eq(conversationParticipants.conversationId, conversationId),
+            eq(conversationParticipants.identityId, senderIdentityId)
+          ))
+          .limit(1)
+          .then(r => r[0]);
+      }
 
       if (!participation) {
         return c.json({ error: 'Not a participant in this conversation' }, 403);
@@ -129,10 +145,10 @@ messageRoutes.post('/', async (c) => {
         return c.json({ error: 'recipient_handle is only valid for native origin' }, 400);
       }
 
-      // Resolve recipient - check both handles table and edges table
-      // First try edges (new unified model)
+      // Resolve recipient edge
       const [recipientEdge] = await db
         .select({
+          id: edges.id,
           identityId: edges.identityId,
           address: edges.address,
         })
@@ -146,8 +162,9 @@ messageRoutes.post('/', async (c) => {
 
       if (recipientEdge) {
         recipientIdentityId = recipientEdge.identityId;
+        recipientEdgeId = recipientEdge.id;
       } else {
-        // Fallback to handles table (legacy)
+        // Fallback to handles table (legacy) - but we still need the edge
         const [recipientHandle] = await db
           .select({ identityId: handles.identityId })
           .from(handles)
@@ -158,29 +175,74 @@ messageRoutes.post('/', async (c) => {
           return c.json({ error: 'Recipient handle not found' }, 404);
         }
         recipientIdentityId = recipientHandle.identityId;
+        
+        // Try to find a native edge for this identity
+        const [legacyEdge] = await db
+          .select({ id: edges.id })
+          .from(edges)
+          .where(and(
+            eq(edges.identityId, recipientIdentityId),
+            eq(edges.isNative, true),
+            eq(edges.status, 'active')
+          ))
+          .limit(1);
+        
+        recipientEdgeId = legacyEdge?.id || null;
       }
 
-      // Check for existing conversation between these two users
-      const senderConversations = await db
-        .select({ conversationId: conversationParticipants.conversationId })
-        .from(conversationParticipants)
-        .where(eq(conversationParticipants.identityId, senderIdentityId));
-
-      for (const conv of senderConversations) {
-        const participants = await db
-          .select({ identityId: conversationParticipants.identityId })
+      // Check for existing conversation between these two edges (preferred)
+      // or between these two identities (fallback)
+      let existingConversationId: string | null = null;
+      
+      // First try edge-based lookup
+      if (recipientEdgeId) {
+        const senderEdgeConversations = await db
+          .select({ conversationId: conversationParticipants.conversationId })
           .from(conversationParticipants)
-          .where(eq(conversationParticipants.conversationId, conv.conversationId));
+          .where(eq(conversationParticipants.edgeId, body.edge_id));
 
-        const participantIds = participants.map(p => p.identityId);
-        
-        if (participantIds.length === 2 && 
-            participantIds.includes(senderIdentityId) && 
-            participantIds.includes(recipientIdentityId)) {
-          conversationId = conv.conversationId;
-          break;
+        for (const conv of senderEdgeConversations) {
+          const [recipientParticipation] = await db
+            .select()
+            .from(conversationParticipants)
+            .where(and(
+              eq(conversationParticipants.conversationId, conv.conversationId),
+              eq(conversationParticipants.edgeId, recipientEdgeId)
+            ))
+            .limit(1);
+
+          if (recipientParticipation) {
+            existingConversationId = conv.conversationId;
+            break;
+          }
         }
       }
+      
+      // Fallback to identity-based lookup
+      if (!existingConversationId) {
+        const senderConversations = await db
+          .select({ conversationId: conversationParticipants.conversationId })
+          .from(conversationParticipants)
+          .where(eq(conversationParticipants.identityId, senderIdentityId));
+
+        for (const conv of senderConversations) {
+          const participants = await db
+            .select({ identityId: conversationParticipants.identityId })
+            .from(conversationParticipants)
+            .where(eq(conversationParticipants.conversationId, conv.conversationId));
+
+          const participantIds = participants.map(p => p.identityId);
+          
+          if (participantIds.length === 2 && 
+              participantIds.includes(senderIdentityId) && 
+              participantIds.includes(recipientIdentityId)) {
+            existingConversationId = conv.conversationId;
+            break;
+          }
+        }
+      }
+      
+      conversationId = existingConversationId;
 
       // Create new conversation if none exists
       if (!conversationId) {
@@ -198,16 +260,20 @@ messageRoutes.post('/', async (c) => {
           createdAt: now,
         });
 
-        // Add both participants
+        // Add both participants with edge IDs
         await db.insert(conversationParticipants).values([
           {
             conversationId,
             identityId: senderIdentityId,
+            edgeId: body.edge_id,
+            isOwner: true,
             joinedAt: now,
           },
           {
             conversationId,
             identityId: recipientIdentityId,
+            edgeId: recipientEdgeId,
+            isOwner: false,
             joinedAt: now,
           },
         ]);

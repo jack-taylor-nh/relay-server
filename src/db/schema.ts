@@ -61,6 +61,7 @@ export type EdgeType =
   | 'native'        // Direct Relay-to-Relay (implicit)
   | 'email'         // Email alias @rlymsg.com
   | 'contact_link'  // Public contact form
+  | 'bridge'        // System bridge (email worker, discord bot, etc.)
   | 'discord'       // Discord bridge
   | 'sms'           // SMS bridge
   | 'github'        // GitHub bridge
@@ -190,8 +191,10 @@ export const conversations = pgTable('conversations', {
 export const conversationParticipants = pgTable('conversation_participants', {
   /** Conversation ID */
   conversationId: text('conversation_id').references(() => conversations.id).notNull(),
-  /** For Relay users: identity ID */
+  /** For Relay users: identity ID (deprecated - use edgeId for new code) */
   identityId: text('identity_id').references(() => identities.id),
+  /** Edge ID this participant is using in this conversation */
+  edgeId: text('edge_id').references(() => edges.id),
   /** For external contacts: external identifier (hashed email, etc.) */
   externalId: text('external_id'),
   /** Display name (for external counterparties) */
@@ -203,6 +206,7 @@ export const conversationParticipants = pgTable('conversation_participants', {
 }, (table) => ({
   convIdx: index('conv_participants_conv_idx').on(table.conversationId),
   identityIdx: index('conv_participants_identity_idx').on(table.identityId),
+  edgeIdx: index('conv_participants_edge_idx').on(table.edgeId),
   externalIdx: index('conv_participants_external_idx').on(table.externalId),
 }));
 

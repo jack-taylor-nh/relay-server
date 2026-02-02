@@ -92,12 +92,13 @@ function hexToBytes(hex: string): Uint8Array {
 
 /**
  * Process inbound email from worker
+ * Phase 5: identityId is now optional - we get it from the edge record
  */
 emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
   // Get body from middleware if signature was verified, otherwise parse fresh
   type InboundBody = {
     edgeId: string;
-    identityId: string;
+    identityId?: string;         // Optional: deprecated, we get it from edge
     senderHash: string;          // Hash for conversation matching
     encryptedPayload: string;    // Entire email encrypted (zero-knowledge)
     receivedAt: string;
@@ -105,7 +106,7 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
   
   const body: InboundBody = (c as any).get('workerBody') || await c.req.json<InboundBody>();
 
-  if (!body.edgeId || !body.identityId || !body.senderHash || !body.encryptedPayload) {
+  if (!body.edgeId || !body.senderHash || !body.encryptedPayload) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
   }
 
@@ -124,8 +125,11 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
     return c.json({ code: 'EDGE_DISABLED', message: 'Edge is disabled' }, 410);
   }
 
-  if (edge.identityId !== body.identityId) {
-    return c.json({ code: 'EDGE_MISMATCH', message: 'Edge does not belong to identity' }, 400);
+  // Phase 5: Get identity from edge, not from request
+  const identityId = edge.identityId;
+  
+  if (!identityId) {
+    return c.json({ code: 'EDGE_NO_IDENTITY', message: 'Edge has no associated identity' }, 400);
   }
 
   // Look for existing conversation with this sender through this edge
@@ -160,10 +164,11 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
       lastActivityAt: now,
     });
 
-    // Add owner as participant
+    // Add owner as participant (using edge's identity)
     await db.insert(conversationParticipants).values({
       conversationId,
-      identityId: body.identityId,
+      identityId: identityId,
+      edgeId: body.edgeId,  // Phase 3: Store edge ID
       isOwner: true,
     });
 

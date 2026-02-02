@@ -27,10 +27,11 @@ interface Env {
 
 interface EdgeInfo {
   id: string;
-  identityId: string;
   type: string;
+  status: string;
   securityLevel: string;
-  publicKey: string;
+  x25519PublicKey: string;  // Phase 5: Use edge-specific X25519 key
+  displayName?: string;
 }
 
 interface ParsedEmail {
@@ -167,7 +168,8 @@ function extractAliasAddress(address: string): string | null {
 }
 
 /**
- * Look up edge info from API (with KV caching)
+ * Look up edge info from API using unified resolution (with KV caching)
+ * Phase 5: Uses POST /v1/edge/resolve for proper edge-to-edge encryption
  */
 async function lookupEdge(address: string, env: Env): Promise<EdgeInfo | null> {
   // Check cache first
@@ -176,13 +178,20 @@ async function lookupEdge(address: string, env: Env): Promise<EdgeInfo | null> {
     return cached as EdgeInfo;
   }
   
-  // Fetch from API
+  // Determine edge type from address format
+  const edgeType = address.includes('@') ? 'email' : 'native';
+  
+  // Use unified edge resolution endpoint
   try {
-    const response = await fetch(`${env.API_BASE_URL}/v1/edge/lookup/${encodeURIComponent(address)}`, {
-      method: 'GET',
+    const response = await fetch(`${env.API_BASE_URL}/v1/edge/resolve`, {
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      body: JSON.stringify({
+        type: edgeType,
+        address: address,
+      }),
     });
     
     if (!response.ok) {
@@ -194,7 +203,24 @@ async function lookupEdge(address: string, env: Env): Promise<EdgeInfo | null> {
       throw new Error(`API error: ${response.status}`);
     }
     
-    const edgeInfo = await response.json() as EdgeInfo;
+    const data = await response.json() as {
+      edgeId: string;
+      type: string;
+      status: string;
+      securityLevel: string;
+      x25519PublicKey: string;
+      displayName?: string;
+    };
+    
+    // Map to EdgeInfo format
+    const edgeInfo: EdgeInfo = {
+      id: data.edgeId,
+      type: data.type,
+      status: data.status,
+      securityLevel: data.securityLevel,
+      x25519PublicKey: data.x25519PublicKey,
+      displayName: data.displayName,
+    };
     
     // Cache for 1 hour
     await env.EDGE_CACHE.put(`edge:${address}`, JSON.stringify(edgeInfo), { 
@@ -240,12 +266,13 @@ async function hashEmail(email: string): Promise<string> {
 }
 
 /**
- * Encrypt entire email payload with recipient's public key (zero-knowledge)
- * Only the recipient (identity owner) can decrypt
+ * Encrypt entire email payload with recipient's edge X25519 public key (zero-knowledge)
+ * Phase 5: Uses edge-specific X25519 key, not identity-derived key
+ * Only the recipient's edge can decrypt this
  */
 function encryptEmailPayload(email: ParsedEmail, publicKeyBase64: string): string {
   try {
-    // Decode recipient's X25519 encryption public key (converted from Ed25519 by API)
+    // Decode recipient's edge X25519 encryption public key
     const recipientPublicKey = decodeBase64(publicKeyBase64);
     
     // Generate ephemeral keypair for encryption
@@ -290,6 +317,7 @@ function encryptEmailPayload(email: ParsedEmail, publicKeyBase64: string): strin
 
 /**
  * Forward email to API for storage
+ * Phase 5: Encrypts to user's edge-specific X25519 key (not identity-derived)
  */
 async function forwardToApi(
   address: string,
@@ -300,14 +328,14 @@ async function forwardToApi(
   // Hash sender email BEFORE encryption (for deterministic conversation matching)
   const senderHash = await hashEmail(email.from);
   
-  // Encrypt entire email payload with recipient's public key (zero-knowledge)
-  const encryptedPayload = encryptEmailPayload(email, edgeInfo.publicKey);
+  // Encrypt entire email payload with recipient's edge X25519 public key (zero-knowledge)
+  // Phase 5: Use edge-specific key, not identity-derived key
+  const encryptedPayload = encryptEmailPayload(email, edgeInfo.x25519PublicKey);
   
   const timestamp = new Date().toISOString();
   
   const payload = {
     edgeId: edgeInfo.id,
-    identityId: edgeInfo.identityId,
     senderHash,                     // Deterministic hash for matching
     encryptedPayload,               // Full email encrypted (server can't read)
     receivedAt: timestamp,
