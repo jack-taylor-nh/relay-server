@@ -92,6 +92,8 @@ conversationRoutes.get('/', async (c) => {
       let counterpartyX25519Key = null;
       if (conv.origin === 'native' && counterparty?.identityId) {
         // Look up native edge directly (not via handles table, since edges are the source of truth)
+        // Order by x25519PublicKey to prefer edges with encryption keys (proper handle edges)
+        // over legacy auto-created edges (which have address = identityId and no x25519)
         const [edgeResult] = await db
           .select({ 
             id: edges.id,
@@ -105,6 +107,7 @@ conversationRoutes.get('/', async (c) => {
             eq(edges.type, 'native'),
             eq(edges.status, 'active')
           ))
+          .orderBy(sql`CASE WHEN ${edges.x25519PublicKey} IS NOT NULL THEN 0 ELSE 1 END`)
           .limit(1);
         
         console.log('[DEBUG] Counterparty edge lookup:', {

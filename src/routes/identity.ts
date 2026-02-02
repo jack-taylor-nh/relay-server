@@ -7,7 +7,6 @@
 
 import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
-import { ulid } from 'ulid';
 import { db, identities, handles, edges } from '../db/index.js';
 import { verifyString, fromBase64, computeFingerprint } from '../core/crypto/index.js';
 
@@ -80,21 +79,10 @@ identityRoutes.post('/register', async (c) => {
     lastSeenAt: now,
   });
 
-  // Create native edge automatically (every identity has one)
-  const nativeEdgeId = ulid();
-  await db.insert(edges).values({
-    id: nativeEdgeId,
-    identityId: fingerprint,
-    type: 'native',
-    address: fingerprint, // Native edge address = identity fingerprint
-    label: 'Direct Messages',
-    status: 'active',
-    securityLevel: 'e2ee',
-    createdAt: now,
-    policy: {
-      firstContact: { mode: 'open' },
-    },
-  });
+  // NOTE: Native edges are now created when user claims a handle via /v1/edge endpoint
+  // This auto-creation was creating phantom edges without x25519 keys, causing encryption failures
+  // Legacy code removed - native edges must be explicitly created with x25519PublicKey
+  const nativeEdgeId = null; // No longer auto-created
 
   return c.json({
     id: fingerprint,

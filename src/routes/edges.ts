@@ -273,7 +273,7 @@ edgeRoutes.get('/lookup/:address', async (c) => {
 
   return c.json({
     id: edge.id,
-    identityId: edge.identityId,
+    // NOTE: identityId intentionally NOT returned - prevents edge → identity linkage
     type: edge.type,
     securityLevel: edge.securityLevel,
     publicKey: edge.x25519PublicKey,  // Use stored X25519 key
