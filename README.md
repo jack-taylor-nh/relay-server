@@ -8,8 +8,8 @@ Relay Server provides the core backend infrastructure for the Relay protocol, en
 
 - **Zero-Knowledge Architecture**: Server cannot decrypt user data or identify communication partners
 - **Identity Management**: Cryptographic identity creation with Ed25519/X25519 keypairs
-- **Edge Management**: Disposable contact surfaces (email aliases, bridge endpoints)
-- **E2E Encrypted Messaging**: All message content encrypted client-side
+- **Edge Management**: Disposable contact surfaces (handles, email aliases, bridge endpoints)
+- **Double Ratchet Messaging**: Forward-secret E2E encrypted native messaging
 - **Email Bridge**: Secure email gateway with transient recipient decryption
 - **Bridge Infrastructure**: Foundation for Discord, Telegram, SMS, and other communication bridges
 
@@ -17,7 +17,7 @@ Relay Server provides the core backend infrastructure for the Relay protocol, en
 
 **Relay follows a zero-knowledge design:**
 
-- ✅ Server cannot decrypt message content (encrypted client-side)
+- ✅ Server cannot decrypt message content (Double Ratchet encrypted client-side)
 - ✅ Server cannot identify recipients (encrypted for workers, hashed for matching)
 - ✅ Server cannot link edges to user identities (architectural separation)
 - ✅ Workers decrypt recipients transiently only (never stored)
@@ -36,17 +36,21 @@ Relay Server is built with a zero-knowledge, defense-in-depth approach:
 - **Crypto**: TweetNaCl (Ed25519, X25519, XSalsa20-Poly1305)
 - **Auth**: JWT-based sessions with Ed25519 signature verification
 - **Workers**: Cloudflare Workers for bridge transient decryption
-- **Email**: Resend API for sending (MailChannels deprecated June 2024)
+- **Email**: Resend API for outbound email delivery
 
 ### Zero-Knowledge Components
 
 1. **API Server (Railway)**: Stores encrypted messages, routes data, never decrypts
 2. **Email Worker (Cloudflare)**: Decrypts recipient emails transiently for sending
-3. **Client (Extension)**: All encryption/decryption happens here
+3. **Client (Extension)**: All Double Ratchet encryption/decryption happens here
 
 ```
-External Email → Worker → [Encrypt] → API → [Store Encrypted] → Client → [Decrypt]
-Client → [Encrypt] → API → [Store Encrypted] → Worker → [Decrypt Recipient] → Resend → External Email
+Native Messaging:
+Client A → [Double Ratchet Encrypt] → API → [Store Ciphertext] → Client B → [Double Ratchet Decrypt]
+
+Email Bridge:
+External Email → Worker → [Encrypt for User] → API → [Store] → Client → [Decrypt]
+Client → [Encrypt] → API → Worker → [Decrypt Recipient Only] → Resend → External Email
 ```
 
 ## Prerequisites
@@ -150,24 +154,36 @@ The server will start on `http://localhost:3000`.
 - `POST /v1/email/send` - Prepare email send (returns context for client)
 - `POST /v1/email/record-sent` - Record sent message (accepts encrypted content)
 
-### Handles (Future - Phase 5)
-- `POST /v1/handles` - Create handle (@username)
-- `GET /v1/handles/:handle` - Resolve handle to public key
+### Handles (Native Messaging)
+- `POST /v1/handles` - Create handle (&username) with X25519 edge key
+- `POST /v1/handles/resolve` - Resolve handle to public key + edge info
 - `GET /v1/handles` - List user's handles
+- `DELETE /v1/handles/:id` - Delete handle
+
+### Messages (Unified Endpoint)
+- `POST /v1/messages` - Send message (supports new conversations via `recipient_handle`)
 
 ## Database Schema
 
 The server uses PostgreSQL with the following core tables:
 
 - **identities**: User accounts with Ed25519 public keys
-- **edges**: Communication endpoints (email aliases, bridge connections)
-- **conversations**: Message threads linked to edges
+- **handles**: Native handles (&username) linked to identities
+- **edges**: Communication endpoints (email aliases, handles, bridge connections)
+  - `x25519_public_key`: Per-edge encryption key for Double Ratchet
+- **conversations**: Message threads with origin tracking
 - **conversation_participants**: Participants with hashed external IDs (zero-knowledge)
-- **messages**: Encrypted message content (contentType: 'application/encrypted')
+- **messages**: Encrypted message content with Double Ratchet metadata
+  - `ciphertext`: Encrypted content (base64)
+  - `ephemeral_pubkey`: DH public key for ratchet (base64)
+  - `nonce`: AEAD nonce (base64)
+  - `ratchet_pn`: Previous chain length (Double Ratchet)
+  - `ratchet_n`: Message number in chain (Double Ratchet)
 - **email_messages**: Email-specific metadata (Message-ID, In-Reply-To)
 
 **Key zero-knowledge features:**
-- Message content stored as `encryptedContent` (JSON: ephemeralPubkey, nonce, ciphertext)
+- Message content stored as Double Ratchet ciphertext (forward secrecy)
+- Edge-level X25519 keys for per-conversation encryption
 - External IDs (email addresses) stored as salted hashes for conversation matching
 - Bridge credentials encrypted in `edges.metadata`
 - Timestamps rounded to 5 minutes
@@ -182,7 +198,7 @@ See [`drizzle/`](./drizzle/) for full schema migrations.
 | `npm run dev` | Start development server with hot reload |
 | `npm run build` | Compile TypeScript to JavaScript |
 | `npm start` | Run production server |
-| `npm run db:migrate` | Run database migrations |
+| `npm run db:push` | Push schema changes to database |
 | `npm run db:studio` | Open Drizzle Studio (DB GUI) |
 | `npm run typecheck` | Type-check without building |
 
@@ -197,7 +213,7 @@ This server is designed to deploy seamlessly to [Railway](https://railway.app):
 3. Add PostgreSQL database addon
 4. Set environment variables (see `.env.example`)
 5. Railway auto-detects build/start commands
-6. Run migrations: `railway run npm run db:migrate`
+6. Push schema: `railway run npx drizzle-kit push`
 
 ### Other Platforms
 
@@ -211,7 +227,9 @@ The server works on any Node.js platform (Render, Fly.io, etc.):
 
 ### Zero-Knowledge Guarantees
 
+- ✅ **Double Ratchet encryption** - Forward secrecy, post-compromise security
 - ✅ **Message content encrypted client-side** - Server stores ciphertext only
+- ✅ **Edge-level keys** - Per-handle X25519 keypairs for ratchet initialization
 - ✅ **Recipient addresses encrypted** - Workers decrypt transiently, never store
 - ✅ **External IDs hashed** - Email addresses, Discord IDs stored as salted hashes
 - ✅ **Worker authentication** - Ed25519 signatures verify all worker communications

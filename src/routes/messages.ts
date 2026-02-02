@@ -231,6 +231,9 @@ messageRoutes.post('/', async (c) => {
       ciphertext: body.payload.ciphertext,
       ephemeralPubkey: body.payload.ephemeral_pubkey,
       nonce: body.payload.nonce,
+      // Double Ratchet fields
+      ratchetPn: body.payload.pn ?? null,
+      ratchetN: body.payload.n ?? null,
       signature: body.signature,
       encryptedContent: null,
       plaintextContent: null,

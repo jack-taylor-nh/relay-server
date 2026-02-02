@@ -34,8 +34,8 @@ yarn-error.log*
 .vscode/
 .idea/
 
-# Internal docs (keep local only)
-RELAY_DEV_HANDOFF.md
-RAILWAY_DEPLOY.md
-SECURITY_AUDIT_2026-02-01.md
-MIGRATION_QUERY_KEYS.md
+
+# Documentation (generated/temporary)
+*.md
+!README.md
+!ui/README.md

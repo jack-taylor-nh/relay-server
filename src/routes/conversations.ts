@@ -76,7 +76,7 @@ conversationRoutes.get('/', async (c) => {
       let edge = null;
       if (conv.edgeId) {
         const [edgeResult] = await db
-          .select({ type: edges.type, address: edges.address, label: edges.label, status: edges.status })
+          .select({ id: edges.id, type: edges.type, address: edges.address, label: edges.label, status: edges.status })
           .from(edges)
           .where(eq(edges.id, conv.edgeId))
           .limit(1);
@@ -105,6 +105,7 @@ conversationRoutes.get('/', async (c) => {
         securityLevel: conv.securityLevel,
         channelLabel: conv.channelLabel,
         edge: edge ? {
+          id: edge.id,
           type: edge.type,
           address: edge.address,
           label: edge.label,
@@ -201,6 +202,9 @@ conversationRoutes.get('/:id/messages', async (c) => {
       ephemeralPubkey: msg.ephemeralPubkey,
       nonce: msg.nonce,
       signature: msg.signature,
+      // Double Ratchet fields
+      ratchetPn: msg.ratchetPn,
+      ratchetN: msg.ratchetN,
       // Zero-knowledge encrypted payload (from worker)
       encryptedContent: msg.encryptedContent,
       // Gateway secured field (DEPRECATED)

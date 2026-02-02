@@ -231,10 +231,14 @@ export const messages = pgTable('messages', {
   senderExternalId: text('sender_external_id'),
   /** For e2ee: encrypted content (base64) */
   ciphertext: text('ciphertext'),
-  /** Ephemeral public key for decryption (base64) */
+  /** Ephemeral/DH public key for decryption (base64) - for ratchet, this is the dh key */
   ephemeralPubkey: text('ephemeral_pubkey'),
   /** Nonce used for encryption (base64) */
   nonce: text('nonce'),
+  /** Double Ratchet: Previous chain length */
+  ratchetPn: integer('ratchet_pn'),
+  /** Double Ratchet: Message number in current chain */
+  ratchetN: integer('ratchet_n'),
   /** For gateway_secured: encrypted package from worker (zero-knowledge) */
   encryptedContent: text('encrypted_content'),
   /** For gateway_secured: plaintext content (server-readable) - DEPRECATED */
