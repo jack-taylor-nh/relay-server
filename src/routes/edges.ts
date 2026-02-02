@@ -389,7 +389,6 @@ edgeRoutes.get('/lookup/:address', async (c) => {
   const [edge] = await db
     .select({
       id: edges.id,
-      identityId: edges.identityId,
       type: edges.type,
       status: edges.status,
       securityLevel: edges.securityLevel,
@@ -532,13 +531,10 @@ edgeRoutes.post('/:id/burn', async (c) => {
 
   // Burn the edge: NULL ownerQueryKey to make permanently untraceable
   // Address stays to prevent collision but becomes anonymous
-  // Note: identityId is no longer stored, so only ownerQueryKey needs nulling
   await db
     .update(edges)
     .set({
       ownerQueryKey: sql`NULL`,  // Critical: breaks zero-knowledge query linkage
-      // identityId already not stored in new edges, but NULL any legacy values
-      identityId: sql`NULL`,
       metadata: {},              // Clear encrypted data (handle, displayName, etc.)
       status: 'burned',
       disabledAt: new Date(),

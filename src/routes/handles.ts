@@ -282,7 +282,6 @@ handleRoutes.delete('/:id', authMiddleware, async (c) => {
       .update(edges)
       .set({
         ownerQueryKey: sql`NULL`,
-        identityId: sql`NULL`,  // Also NULL any legacy identityId
         metadata: {},
         status: 'burned',
         disabledAt: new Date(),

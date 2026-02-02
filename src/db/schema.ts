@@ -88,12 +88,6 @@ export const edges = pgTable('edges', {
    */
   ownerQueryKey: text('owner_query_key'),
   
-  /** Owner identity ID - stored for operational queries, nullable for privacy
-   * No foreign key constraint (architectural isolation)
-   * NULL when edge is burned
-   */
-  identityId: text('identity_id'),
-  
   /** Bridge type: email, native, discord, telegram, sms, etc. */
   bridgeType: text('bridge_type').notNull().default('email'),
   /** True for native Relay-to-Relay edges */
@@ -126,7 +120,6 @@ export const edges = pgTable('edges', {
   lastActivityAt: timestamp('last_activity_at', { withTimezone: true }),
 }, (table) => ({
   ownerQueryKeyIdx: index('edges_owner_query_key_idx').on(table.ownerQueryKey),
-  identityIdx: index('edges_identity_idx').on(table.identityId),
   addressIdx: uniqueIndex('edges_address_idx').on(table.address),
   typeIdx: index('edges_type_idx').on(table.type),
   bridgeTypeIdx: index('edges_bridge_type_idx').on(table.bridgeType),
@@ -183,8 +176,6 @@ export const conversations = pgTable('conversations', {
 export const conversationParticipants = pgTable('conversation_participants', {
   /** Conversation ID */
   conversationId: text('conversation_id').references(() => conversations.id).notNull(),
-  /** For Relay users: identity ID (deprecated - use edgeId for new code) */
-  identityId: text('identity_id').references(() => identities.id),
   /** Edge ID this participant is using in this conversation */
   edgeId: text('edge_id').references(() => edges.id),
   /** For external contacts: external identifier (hashed email, etc.) */
@@ -197,7 +188,6 @@ export const conversationParticipants = pgTable('conversation_participants', {
   joinedAt: timestamp('joined_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   convIdx: index('conv_participants_conv_idx').on(table.conversationId),
-  identityIdx: index('conv_participants_identity_idx').on(table.identityId),
   edgeIdx: index('conv_participants_edge_idx').on(table.edgeId),
   externalIdx: index('conv_participants_external_idx').on(table.externalId),
 }));
@@ -221,8 +211,6 @@ export const messages = pgTable('messages', {
   securityLevel: text('security_level').notNull().$type<SecurityLevel>().default('e2ee'),
   /** Content type (MIME-like, e.g., "text/plain", "text/markdown", "application/encrypted") */
   contentType: text('content_type').notNull().default('text/plain'),
-  /** Sender: identity ID for Relay users */
-  senderIdentityId: text('sender_identity_id').references(() => identities.id),
   /** Sender: external ID for non-Relay contacts */
   senderExternalId: text('sender_external_id'),
   /** For e2ee: encrypted content (base64) */
@@ -246,7 +234,6 @@ export const messages = pgTable('messages', {
 }, (table) => ({
   convIdx: index('messages_conv_idx').on(table.conversationId),
   createdIdx: index('messages_created_idx').on(table.createdAt),
-  senderIdentityIdx: index('messages_sender_identity_idx').on(table.senderIdentityId),
 }));
 
 // Note: emailAliases table removed - edges table now handles all contact surfaces

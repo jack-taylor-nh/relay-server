@@ -243,7 +243,7 @@ conversationRoutes.get('/:id/messages', async (c) => {
       origin: msg.origin,
       securityLevel: msg.securityLevel,
       contentType: msg.contentType,
-      senderIdentityId: msg.senderIdentityId,
+      senderEdgeId: msg.edgeId,  // Sender identified by edge, not identity
       senderExternalId: msg.senderExternalId,
       // E2EE fields (native Relay-to-Relay)
       ciphertext: msg.ciphertext,

@@ -236,7 +236,7 @@ messageRoutes.post('/', async (c) => {
       origin: body.origin as EdgeType,
       securityLevel: body.security_level,
       contentType: body.payload.content_type || 'text/plain',
-      senderIdentityId,
+      // Sender is identified by edgeId, not identityId
       senderExternalId: null,
       ciphertext: body.payload.ciphertext,
       ephemeralPubkey: body.payload.ephemeral_pubkey,

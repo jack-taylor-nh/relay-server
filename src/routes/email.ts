@@ -126,12 +126,8 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
     return c.json({ code: 'EDGE_DISABLED', message: 'Edge is disabled' }, 410);
   }
 
-  // Phase 5: Get identity from edge, not from request
-  const identityId = edge.identityId;
-  
-  if (!identityId) {
-    return c.json({ code: 'EDGE_NO_IDENTITY', message: 'Edge has no associated identity' }, 400);
-  }
+  // Phase 5: Edge ownership verified via ownerQueryKey (no identityId stored)
+  // The edge exists and is active, that's all we need to know
 
   // Look for existing conversation with this sender through this edge
   // Match by: edge_id + senderHash (deterministic per sender)
@@ -436,7 +432,7 @@ emailRoutes.post('/dispatch', authMiddleware, async (c) => {
       origin: 'email',
       securityLevel: 'gateway_secured',
       contentType: 'text/plain',
-      senderIdentityId: identityId,
+      // Sender identified by edge, not identity
       plaintextContent: body.content,
       createdAt: now,
     });
@@ -527,7 +523,7 @@ emailRoutes.post('/record-sent', authMiddleware, async (c) => {
     origin: 'email',
     securityLevel: 'gateway_secured',
     contentType: 'application/encrypted',
-    senderIdentityId: identityId,
+    // Sender identified by edge, not identity
     encryptedContent: body.encryptedContent,  // Zero-knowledge storage!
     createdAt: now,
   });
