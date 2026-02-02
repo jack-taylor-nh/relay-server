@@ -24,5 +24,5 @@ preview_id = "3900d1a2439b465d972906983b85b524"
 # KV namespace for Double Ratchet state storage
 [[kv_namespaces]]
 binding = "RATCHET_STATES"
-id = "ratchet-states-prod"
-preview_id = "ratchet-states-preview"
+id = "4aa0d8cb81ce40789a2be2ff5a3e8393"
+preview_id = "f29182ad4ab143b78b18745c092bea45"
