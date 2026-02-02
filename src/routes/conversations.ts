@@ -7,11 +7,12 @@
  */
 
 import { Hono } from 'hono';
-import { eq, desc, and, lt, sql, inArray } from 'drizzle-orm';
+import { eq, desc, and, lt, sql, inArray, isNull, isNotNull } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import { db, conversations, conversationParticipants, messages, edges, handles, type SecurityLevel } from '../db/index.js';
+import { db, conversations, conversationParticipants, messages, edges, type SecurityLevel } from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { DEFAULT_PAGE_SIZE } from '../core/constants.js';
+import { computeQueryKey } from '../lib/queryKey.js';
 
 export const conversationRoutes = new Hono();
 
@@ -20,19 +21,39 @@ conversationRoutes.use('*', authMiddleware);
 
 /**
  * List conversations for the authenticated user
+ * 
+ * SECURITY: Uses edge-based lookup instead of identityId to preserve unlinkability
+ * 1. Get user's edges via ownerQueryKey (HMAC-based, can't link back to identity)
+ * 2. Find conversations where those edges are participants
  */
 conversationRoutes.get('/', async (c) => {
   const identityId = c.get('fingerprint'); // fingerprint = identityId
   const cursor = c.req.query('cursor');
   const limit = Math.min(parseInt(c.req.query('limit') || String(DEFAULT_PAGE_SIZE), 10), 100);
 
-  // Get conversation IDs for this user (where they are a participant)
-  const participations = await db
-    .select({ conversationId: conversationParticipants.conversationId })
-    .from(conversationParticipants)
-    .where(eq(conversationParticipants.identityId, identityId));
+  // Get user's edges via ownerQueryKey (zero-knowledge ownership proof)
+  const ownerQueryKey = computeQueryKey(identityId);
+  const userEdges = await db
+    .select({ id: edges.id })
+    .from(edges)
+    .where(eq(edges.ownerQueryKey, ownerQueryKey));
 
-  const conversationIds = participations.map(p => p.conversationId);
+  const userEdgeIds = userEdges.map(e => e.id);
+
+  if (userEdgeIds.length === 0) {
+    return c.json({ conversations: [], cursor: null });
+  }
+
+  // Get conversation IDs where user's edges are participants
+  const participations = await db
+    .select({ conversationId: conversationParticipants.conversationId, edgeId: conversationParticipants.edgeId })
+    .from(conversationParticipants)
+    .where(inArray(conversationParticipants.edgeId, userEdgeIds));
+
+  const conversationIds = [...new Set(participations.map(p => p.conversationId))];
+  
+  // Map of conversationId -> user's edgeId for that conversation
+  const myEdgeByConversation = new Map(participations.map(p => [p.conversationId, p.edgeId]));
 
   if (conversationIds.length === 0) {
     return c.json({ conversations: [], cursor: null });
@@ -83,16 +104,17 @@ conversationRoutes.get('/', async (c) => {
         edge = edgeResult || null;
       }
 
-      // Find counterparty (not the current user)
-      const counterparty = parts.find(p => p.identityId !== identityId);
+      // Find counterparty (participant whose edge is NOT in our userEdgeIds)
+      const myEdgeId = myEdgeByConversation.get(conv.id) || conv.edgeId;
+      const counterpartyParticipant = parts.find(p => p.edgeId && !userEdgeIds.includes(p.edgeId));
       
       // Get counterparty's edge info
       let counterpartyHandle = null;
       let counterpartyEdgeId = null;
       let counterpartyX25519Key = null;
       
-      // First try: Use edge ID stored in participant (new model)
-      if (counterparty?.edgeId) {
+      // Look up counterparty edge info
+      if (counterpartyParticipant?.edgeId) {
         const [edgeResult] = await db
           .select({ 
             id: edges.id,
@@ -101,7 +123,7 @@ conversationRoutes.get('/', async (c) => {
             displayName: sql<string>`${edges.metadata}->>'displayName'`,
           })
           .from(edges)
-          .where(eq(edges.id, counterparty.edgeId))
+          .where(eq(edges.id, counterpartyParticipant.edgeId))
           .limit(1);
         
         if (edgeResult) {
@@ -110,35 +132,6 @@ conversationRoutes.get('/', async (c) => {
           counterpartyX25519Key = edgeResult.x25519PublicKey;
         }
       }
-      
-      // Fallback: Look up by identity ID (legacy)
-      if (!counterpartyEdgeId && conv.origin === 'native' && counterparty?.identityId) {
-        const [edgeResult] = await db
-          .select({ 
-            id: edges.id,
-            address: edges.address,
-            x25519PublicKey: edges.x25519PublicKey,
-            displayName: sql<string>`${edges.metadata}->>'displayName'`,
-          })
-          .from(edges)
-          .where(and(
-            eq(edges.identityId, counterparty.identityId),
-            eq(edges.type, 'native'),
-            eq(edges.status, 'active')
-          ))
-          .orderBy(sql`CASE WHEN ${edges.x25519PublicKey} IS NOT NULL THEN 0 ELSE 1 END`)
-          .limit(1);
-        
-        if (edgeResult) {
-          counterpartyHandle = edgeResult.address;
-          counterpartyEdgeId = edgeResult.id;
-          counterpartyX25519Key = edgeResult.x25519PublicKey;
-        }
-      }
-      
-      // Find my edge in this conversation
-      const myParticipation = parts.find(p => p.identityId === identityId);
-      const myEdgeId = myParticipation?.edgeId || conv.edgeId;
       
       return {
         id: conv.id,
@@ -153,10 +146,10 @@ conversationRoutes.get('/', async (c) => {
           status: edge.status,
         } : null,
         myEdgeId,  // Include my edge ID for ratchet keying
-        counterparty: counterparty ? {
-          identityId: counterparty.identityId,
-          externalId: counterparty.externalId,
-          displayName: counterparty.displayName,
+        counterparty: counterpartyParticipant ? {
+          // SECURITY: Do NOT expose identityId - only edge-based identifiers
+          externalId: counterpartyParticipant.externalId,
+          displayName: counterpartyParticipant.displayName,
           handle: counterpartyHandle,
           edgeId: counterpartyEdgeId,
           x25519PublicKey: counterpartyX25519Key,
@@ -175,6 +168,8 @@ conversationRoutes.get('/', async (c) => {
 
 /**
  * Get messages in a conversation
+ * 
+ * SECURITY: Verifies access via edge ownership, not identity
  */
 conversationRoutes.get('/:id/messages', async (c) => {
   const identityId = c.get('fingerprint');
@@ -182,13 +177,22 @@ conversationRoutes.get('/:id/messages', async (c) => {
   const cursor = c.req.query('cursor');
   const limit = Math.min(parseInt(c.req.query('limit') || String(DEFAULT_PAGE_SIZE), 10), 100);
 
-  // Verify user is a participant
+  // Get user's edges via ownerQueryKey
+  const ownerQueryKey = computeQueryKey(identityId);
+  const userEdges = await db
+    .select({ id: edges.id })
+    .from(edges)
+    .where(eq(edges.ownerQueryKey, ownerQueryKey));
+
+  const userEdgeIds = userEdges.map(e => e.id);
+
+  // Verify user is a participant (via edge ownership)
   const [participation] = await db
     .select()
     .from(conversationParticipants)
     .where(and(
       eq(conversationParticipants.conversationId, conversationId),
-      eq(conversationParticipants.identityId, identityId)
+      inArray(conversationParticipants.edgeId, userEdgeIds.length > 0 ? userEdgeIds : ['__none__'])
     ))
     .limit(1);
 
@@ -261,6 +265,8 @@ conversationRoutes.get('/:id/messages', async (c) => {
 
 /**
  * Send a message in a conversation
+ * 
+ * SECURITY: Verifies access via edge ownership, not identity
  */
 conversationRoutes.post('/:id/messages', async (c) => {
   const identityId = c.get('fingerprint');
@@ -283,13 +289,22 @@ conversationRoutes.post('/:id/messages', async (c) => {
   const protocolVersion = body.protocolVersion || '1.0';
   const contentType = body.contentType || 'text/plain';
 
-  // Verify user is a participant
+  // Get user's edges via ownerQueryKey
+  const ownerQueryKey = computeQueryKey(identityId);
+  const userEdges = await db
+    .select({ id: edges.id })
+    .from(edges)
+    .where(eq(edges.ownerQueryKey, ownerQueryKey));
+
+  const userEdgeIds = userEdges.map(e => e.id);
+
+  // Verify user is a participant (via edge ownership)
   const [participation] = await db
     .select()
     .from(conversationParticipants)
     .where(and(
       eq(conversationParticipants.conversationId, conversationId),
-      eq(conversationParticipants.identityId, identityId)
+      inArray(conversationParticipants.edgeId, userEdgeIds.length > 0 ? userEdgeIds : ['__none__'])
     ))
     .limit(1);
 
@@ -332,15 +347,18 @@ conversationRoutes.post('/:id/messages', async (c) => {
   const messageId = ulid();
   const now = new Date();
 
+  // Use the edge from participation for sender tracking (not identity)
+  const senderEdgeId = participation.edgeId;
+
   await db.insert(messages).values({
     id: messageId,
     protocolVersion,
     conversationId,
-    edgeId: conversation.edgeId,
+    edgeId: senderEdgeId || conversation.edgeId,  // Sender's edge for this conversation
     origin: conversation.origin,
     securityLevel: messageSecurityLevel,
     contentType,
-    senderIdentityId: identityId,
+    // SECURITY: Do NOT store senderIdentityId - use edge for sender identification
     ciphertext: body.ciphertext,
     ephemeralPubkey: body.ephemeralPubkey,
     nonce: body.nonce,
@@ -361,7 +379,8 @@ conversationRoutes.post('/:id/messages', async (c) => {
   return c.json({
     id: messageId,
     conversationId,
-    senderIdentityId: identityId,
+    // Return edge ID instead of identity ID
+    senderEdgeId,
     createdAt: now.toISOString(),
   }, 201);
 });

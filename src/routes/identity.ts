@@ -7,7 +7,7 @@
 
 import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
-import { db, identities, handles, edges } from '../db/index.js';
+import { db, identities, edges } from '../db/index.js';
 import { verifyString, fromBase64, computeFingerprint } from '../core/crypto/index.js';
 
 export const identityRoutes = new Hono();
@@ -97,6 +97,10 @@ identityRoutes.post('/register', async (c) => {
 
 /**
  * Get identity details
+ * 
+ * SECURITY: This endpoint only returns PUBLIC information about an identity.
+ * It does NOT expose handles, edges, or any linkable data.
+ * The only purpose is to verify an identity's public key for cryptographic operations.
  */
 identityRoutes.get('/:id', async (c) => {
   const id = c.req.param('id');
@@ -111,35 +115,14 @@ identityRoutes.get('/:id', async (c) => {
     return c.json({ code: 'IDENTITY_NOT_FOUND', message: 'Identity not found' }, 404);
   }
 
-  // Get handles for this identity
-  const identityHandles = await db
-    .select({ 
-      id: handles.id,
-      handle: handles.handle, 
-      displayName: handles.displayName,
-      createdAt: handles.createdAt,
-    })
-    .from(handles)
-    .where(eq(handles.identityId, id));
-
-  // Get edges count by type
-  const identityEdges = await db
-    .select({ type: edges.type, status: edges.status })
-    .from(edges)
-    .where(eq(edges.identityId, id));
-
-  const edgeCounts = identityEdges.reduce((acc, edge) => {
-    acc[edge.type] = (acc[edge.type] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-
+  // SECURITY: Only return minimal public info
+  // Do NOT expose handles, edges, or any linkable data
+  // Handles and edges are accessed via their respective endpoints with proper auth
   return c.json({
     id: identity.id,
     publicKey: identity.publicKey,
-    status: identity.status,
-    createdAt: identity.createdAt.toISOString(),
-    lastSeenAt: identity.lastSeenAt?.toISOString() || null,
-    handles: identityHandles,
-    edgeCounts,
+    homeServer: identity.homeServer,
+    // Note: status, handles, edges intentionally NOT returned
+    // Clients should query edges via the edges endpoint with their own auth
   });
 });

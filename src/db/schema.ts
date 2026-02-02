@@ -32,26 +32,18 @@ export const identities = pgTable('identities', {
 });
 
 // ============================================
-// Handles (User-Facing Persistent Identity)
+// Handles - REMOVED (v0.0.8)
 // ============================================
-
-export const handles = pgTable('handles', {
-  /** Unique handle ID (UUID) */
-  id: text('id').primaryKey(),
-  /** Owner identity ID (fingerprint) */
-  identityId: text('identity_id').references(() => identities.id, { onDelete: 'cascade' }).notNull(),
-  /** Handle string (without @ prefix, e.g., 'alice') */
-  handle: text('handle').notNull().unique(),
-  /** Optional display name */
-  displayName: text('display_name'),
-  /** When handle was created */
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  /** When handle was last updated */
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-}, (table) => ({
-  identityIdx: index('handles_identity_idx').on(table.identityId),
-  handleIdx: index('handles_handle_idx').on(table.handle),
-}));
+// Handles are now represented as native edges with:
+// - type: 'native'
+// - address: handle name (e.g., 'alice')
+// - ownerQueryKey: HMAC(identityId, secret) for ownership
+// 
+// This provides:
+// - No identity_id column exposing ownership
+// - Unified edge-based architecture
+// - Handles are burnable like any edge
+// - Same first-contact policies as other edges
 
 // ============================================
 // Edges (Contact Points - Unified Model)
@@ -283,8 +275,8 @@ export const emailMessages = pgTable('email_messages', {
 export const abuseSignals = pgTable('abuse_signals', {
   /** Unique signal ID */
   id: text('id').primaryKey(),
-  /** Reporter identity ID */
-  reporterIdentityId: text('reporter_identity_id').references(() => identities.id).notNull(),
+  /** Reporter edge ID (optional - anonymous reporting allowed) */
+  reporterEdgeId: text('reporter_edge_id').references(() => edges.id),
   /** Reported conversation ID */
   conversationId: text('conversation_id').references(() => conversations.id),
   /** Reported message ID */
@@ -323,8 +315,7 @@ export const rateLimitLedger = pgTable('rate_limit_ledger', {
 export type Identity = typeof identities.$inferSelect;
 export type NewIdentity = typeof identities.$inferInsert;
 
-export type Handle = typeof handles.$inferSelect;
-export type NewHandle = typeof handles.$inferInsert;
+// Handle types removed - handles are now native edges
 
 export type Edge = typeof edges.$inferSelect;
 export type NewEdge = typeof edges.$inferInsert;

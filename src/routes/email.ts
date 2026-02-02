@@ -8,13 +8,14 @@
  */
 
 import { Hono } from 'hono';
-import { eq, and, not, isNull, or } from 'drizzle-orm';
+import { eq, and, not, isNull, or, inArray } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { Resend } from 'resend';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import { db, edges, conversations, conversationParticipants, messages, emailMessages } from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { computeQueryKey } from '../lib/queryKey.js';
 
 const { decodeBase64 } = naclUtil;
 
@@ -164,11 +165,11 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
       lastActivityAt: now,
     });
 
-    // Add owner as participant (using edge's identity)
+    // Add owner as participant using edge ID only - NO identityId for unlinkability
     await db.insert(conversationParticipants).values({
       conversationId,
-      identityId: identityId,
-      edgeId: body.edgeId,  // Phase 3: Store edge ID
+      // SECURITY: Do NOT store identityId - breaks unlinkability
+      edgeId: body.edgeId,
       isOwner: true,
     });
 
@@ -231,6 +232,8 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
 
 /**
  * Send outbound email via Resend
+ * 
+ * SECURITY: Verifies access via edge ownership, not identity
  */
 emailRoutes.post('/send', authMiddleware, async (c) => {
   const identityId = c.get('fingerprint');
@@ -243,6 +246,15 @@ emailRoutes.post('/send', authMiddleware, async (c) => {
   if (!body.conversationId || !body.content) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
   }
+
+  // Get user's edges via ownerQueryKey
+  const ownerQueryKey = computeQueryKey(identityId);
+  const userEdges = await db
+    .select({ id: edges.id })
+    .from(edges)
+    .where(eq(edges.ownerQueryKey, ownerQueryKey));
+
+  const userEdgeIds = userEdges.map(e => e.id);
 
   // Get conversation and verify ownership
   const [conv] = await db
@@ -259,13 +271,13 @@ emailRoutes.post('/send', authMiddleware, async (c) => {
     return c.json({ code: 'NO_EDGE', message: 'This conversation has no email edge' }, 400);
   }
 
-  // Verify user is a participant
+  // Verify user is a participant (via edge ownership)
   const [participation] = await db
     .select()
     .from(conversationParticipants)
     .where(and(
       eq(conversationParticipants.conversationId, body.conversationId),
-      eq(conversationParticipants.identityId, identityId)
+      inArray(conversationParticipants.edgeId, userEdgeIds.length > 0 ? userEdgeIds : ['__none__'])
     ))
     .limit(1);
 
@@ -293,15 +305,19 @@ emailRoutes.post('/send', authMiddleware, async (c) => {
   }
 
   // Get recipient info (contains encrypted email address)
-  // For email conversations, the external participant has NULL identityId
+  // For email conversations, the external participant has no edgeId (they're not Relay users)
   const [participant] = await db
     .select()
     .from(conversationParticipants)
     .where(and(
       eq(conversationParticipants.conversationId, body.conversationId),
+      // External participants don't have edgeId (or it's not in our userEdgeIds)
       or(
-        not(eq(conversationParticipants.identityId, identityId)),
-        isNull(conversationParticipants.identityId)
+        isNull(conversationParticipants.edgeId),
+        // If they have edgeId, it must not be one of ours
+        ...(userEdgeIds.length > 0 
+          ? [not(inArray(conversationParticipants.edgeId, userEdgeIds))]
+          : [])
       )
     ))
     .limit(1);
@@ -339,6 +355,8 @@ emailRoutes.post('/send', authMiddleware, async (c) => {
 /**
  * Dispatch email after client-side decryption
  * Client decrypts the recipient email and sends it back for actual delivery
+ * 
+ * SECURITY: Verifies access via edge ownership, not identity
  */
 emailRoutes.post('/dispatch', authMiddleware, async (c) => {
   const identityId = c.get('fingerprint');
@@ -356,6 +374,15 @@ emailRoutes.post('/dispatch', authMiddleware, async (c) => {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
   }
 
+  // Get user's edges via ownerQueryKey
+  const ownerQueryKey = computeQueryKey(identityId);
+  const userEdges = await db
+    .select({ id: edges.id })
+    .from(edges)
+    .where(eq(edges.ownerQueryKey, ownerQueryKey));
+
+  const userEdgeIds = userEdges.map(e => e.id);
+
   // Verify user is a participant
   const [conv] = await db
     .select()
@@ -372,7 +399,7 @@ emailRoutes.post('/dispatch', authMiddleware, async (c) => {
     .from(conversationParticipants)
     .where(and(
       eq(conversationParticipants.conversationId, body.conversationId),
-      eq(conversationParticipants.identityId, identityId)
+      inArray(conversationParticipants.edgeId, userEdgeIds.length > 0 ? userEdgeIds : ['__none__'])
     ))
     .limit(1);
 
@@ -440,6 +467,8 @@ emailRoutes.post('/dispatch', authMiddleware, async (c) => {
 /**
  * Record sent email message (called after worker sends via MailChannels)
  * Server stores the message in conversation history (encrypted content for zero-knowledge!)
+ * 
+ * SECURITY: Verifies access via edge ownership, not identity
  */
 emailRoutes.post('/record-sent', authMiddleware, async (c) => {
   const identityId = c.get('fingerprint');
@@ -452,6 +481,15 @@ emailRoutes.post('/record-sent', authMiddleware, async (c) => {
   if (!body.conversationId || !body.encryptedContent) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
   }
+
+  // Get user's edges via ownerQueryKey
+  const ownerQueryKey = computeQueryKey(identityId);
+  const userEdges = await db
+    .select({ id: edges.id })
+    .from(edges)
+    .where(eq(edges.ownerQueryKey, ownerQueryKey));
+
+  const userEdgeIds = userEdges.map(e => e.id);
 
   // Verify user is a participant
   const [conv] = await db
@@ -469,7 +507,7 @@ emailRoutes.post('/record-sent', authMiddleware, async (c) => {
     .from(conversationParticipants)
     .where(and(
       eq(conversationParticipants.conversationId, body.conversationId),
-      eq(conversationParticipants.identityId, identityId)
+      inArray(conversationParticipants.edgeId, userEdgeIds.length > 0 ? userEdgeIds : ['__none__'])
     ))
     .limit(1);
 

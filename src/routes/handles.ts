@@ -1,24 +1,33 @@
 /**
- * Handle Routes
+ * Handle Routes (Edge-Only Implementation)
  * 
- * POST /v1/handles - Create a new handle
- * GET /v1/handles - List all handles for authenticated user
- * GET /v1/handles/:handle - Resolve handle to public key (DEPRECATED)
- * POST /v1/handles/resolve - Resolve handle (DEPRECATED)
+ * POST /v1/handles - Create a new handle (creates native edge)
+ * GET /v1/handles - List all handles for authenticated user (queries native edges)
+ * DELETE /v1/handles/:id - Delete a handle (burns the native edge)
+ * POST /v1/handles/resolve - Resolve handle (DEPRECATED - use /v1/edge/resolve)
+ * GET /v1/handles/:handle - Resolve handle (DEPRECATED - use /v1/edge/resolve)
  * 
- * NOTE: For new code, use POST /v1/edge/resolve instead
+ * ARCHITECTURE NOTE: Handles are now just native edges with type='native'.
+ * The handles table is deprecated and will be dropped.
+ * This file maintains API compatibility while working purely with edges.
  */
 
 import { Hono } from 'hono';
 import { eq, and, sql } from 'drizzle-orm';
+import { ulid } from 'ulid';
 import { db } from '../db/index.js';
-import { handles, edges } from '../db/schema.js';
+import { edges } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
-import { randomUUID } from 'crypto';
+import { computeQueryKey } from '../lib/queryKey.js';
 
 export const handleRoutes = new Hono();
 
-// POST /v1/handles - Create a new handle
+/**
+ * POST /v1/handles - Create a new handle
+ * 
+ * Creates a native edge with the handle as the address.
+ * No handles table involved - pure edge creation.
+ */
 handleRoutes.post('/', authMiddleware, async (c) => {
   const identityId = c.get('identityId') as string;
   const body = await c.req.json();
@@ -45,45 +54,36 @@ handleRoutes.post('/', authMiddleware, async (c) => {
 
   try {
     const now = new Date();
-
-    // Create the handle
-    const [newHandle] = await db.insert(handles).values({
-      id: randomUUID(),
-      identityId,
-      handle,
-      displayName: displayName || null,
-      createdAt: now,
-      updatedAt: now,
-    }).returning();
-
-    // Auto-create native edge for this handle
-    const { ulid } = await import('ulid');
-    const { computeQueryKey } = await import('../lib/queryKey.js');
+    const edgeId = ulid();
+    
+    // SECURITY: Use ownerQueryKey, NOT identityId
     const ownerQueryKey = computeQueryKey(identityId);
     
+    // Create native edge - this IS the handle
     const [nativeEdge] = await db.insert(edges).values({
-      id: ulid(),
-      identityId,
+      id: edgeId,
+      // SECURITY: Do NOT store identityId - use ownerQueryKey for ownership
       ownerQueryKey,
-      // handleId: newHandle.id,  // Deprecated - removed in zero-knowledge refactor
       type: 'native',
       bridgeType: 'native',
       isNative: true,
-      address: handle,  // Native edge address is the handle
+      address: handle,  // Handle name is the edge address
+      label: displayName || handle,
       status: 'active',
       securityLevel: 'e2ee',
-      x25519PublicKey,  // Store edge-level encryption key
-      metadata: {},
+      x25519PublicKey,
+      metadata: displayName ? { displayName } : {},
       createdAt: now,
       messageCount: 0,
     }).returning();
 
+    // Return response compatible with old handles API
     return c.json({
-      id: newHandle.id,
-      handle: newHandle.handle,
-      displayName: newHandle.displayName,
-      createdAt: newHandle.createdAt,
-      updatedAt: newHandle.updatedAt,
+      id: nativeEdge.id,  // Edge ID serves as handle ID
+      handle: nativeEdge.address,
+      displayName: displayName || null,
+      createdAt: nativeEdge.createdAt,
+      updatedAt: nativeEdge.createdAt,
       nativeEdge: {
         id: nativeEdge.id,
         address: nativeEdge.address,
@@ -91,7 +91,7 @@ handleRoutes.post('/', authMiddleware, async (c) => {
       },
     }, 201);
   } catch (error: any) {
-    // Handle unique constraint violation
+    // Handle unique constraint violation (address already exists)
     if (error.code === '23505') {
       return c.json({ error: 'Handle already taken' }, 409);
     }
@@ -100,40 +100,58 @@ handleRoutes.post('/', authMiddleware, async (c) => {
   }
 });
 
-// GET /v1/handles - List all handles for authenticated user
+/**
+ * GET /v1/handles - List all handles for authenticated user
+ * 
+ * Queries native edges owned by the user via ownerQueryKey.
+ * No handles table involved.
+ */
 handleRoutes.get('/', authMiddleware, async (c) => {
   const identityId = c.get('identityId') as string;
 
   try {
-    const userHandles = await db
+    // SECURITY: Query by ownerQueryKey, NOT identityId
+    const ownerQueryKey = computeQueryKey(identityId);
+    
+    const nativeEdges = await db
       .select({
-        id: handles.id,
-        handle: handles.handle,
-        displayName: handles.displayName,
-        createdAt: handles.createdAt,
-        updatedAt: handles.updatedAt,
-        nativeEdgeId: edges.id,
+        id: edges.id,
+        address: edges.address,
+        label: edges.label,
+        status: edges.status,
+        x25519PublicKey: edges.x25519PublicKey,
+        createdAt: edges.createdAt,
+        metadata: edges.metadata,
       })
-      .from(handles)
-      .leftJoin(edges, and(
-        // eq(edges.handleId, handles.id),  // Deprecated - removed in zero-knowledge refactor
-        eq(edges.address, handles.handle),  // Match by address instead
-        eq(edges.isNative, true)
-      ))
-      .where(eq(handles.identityId, identityId));
+      .from(edges)
+      .where(and(
+        eq(edges.ownerQueryKey, ownerQueryKey),
+        eq(edges.isNative, true),
+        eq(edges.status, 'active')
+      ));
 
-    return c.json({ handles: userHandles });
+    // Transform to handles format for API compatibility
+    const handles = nativeEdges.map(edge => ({
+      id: edge.id,
+      handle: edge.address,
+      displayName: (edge.metadata as any)?.displayName || edge.label || null,
+      createdAt: edge.createdAt,
+      updatedAt: edge.createdAt,  // Edges don't track updatedAt separately
+      nativeEdgeId: edge.id,
+    }));
+
+    return c.json({ handles });
   } catch (error) {
     console.error('Error fetching handles:', error);
     return c.json({ error: 'Failed to fetch handles' }, 500);
   }
 });
 
-// POST /v1/handles/resolve - Resolve handle to public key
-// @deprecated Use POST /v1/edge/resolve with { type: 'native', address: handle } instead
-// SECURITY: This endpoint has been updated to NOT return identity public key
+/**
+ * POST /v1/handles/resolve - Resolve handle to edge info
+ * @deprecated Use POST /v1/edge/resolve with { type: 'native', address: handle } instead
+ */
 handleRoutes.post('/resolve', async (c) => {
-  // Add deprecation header
   c.header('X-Deprecated', 'Use POST /v1/edge/resolve instead');
   
   try {
@@ -144,12 +162,12 @@ handleRoutes.post('/resolve', async (c) => {
       return c.json({ error: 'Handle is required' }, 400);
     }
 
-    // Query edges table for native edge (handle) - NO identity join
-    const result = await db
+    // Query native edge by address
+    const [result] = await db
       .select({
         handle: edges.address,
         displayName: sql<string>`${edges.metadata}->>'displayName'`,
-        x25519PublicKey: edges.x25519PublicKey,  // Edge-level encryption key
+        x25519PublicKey: edges.x25519PublicKey,
         edgeId: edges.id,
         createdAt: edges.createdAt,
       })
@@ -161,51 +179,44 @@ handleRoutes.post('/resolve', async (c) => {
       ))
       .limit(1);
 
-    if (result.length === 0) {
+    if (!result) {
       return c.json({ error: 'Handle not found' }, 404);
     }
 
-    const resolved = result[0];
-
-    // Return ONLY edge data - NO identity public key
+    // SECURITY: Return ONLY edge data - NO identity information
     return c.json({
-      handle: resolved.handle,
-      displayName: resolved.displayName,
-      x25519PublicKey: resolved.x25519PublicKey,
-      edgeId: resolved.edgeId,
-      createdAt: resolved.createdAt,
-      // NOTE: publicKey (identity key) intentionally NOT returned for privacy
+      handle: result.handle,
+      displayName: result.displayName,
+      x25519PublicKey: result.x25519PublicKey,
+      edgeId: result.edgeId,
+      createdAt: result.createdAt,
     });
   } catch (error) {
-    console.error('Error resolving handle:', {
-      code: (error as any).code,
-      message: 'Failed to resolve handle',
-    });
+    console.error('Error resolving handle:', error);
     return c.json({ error: 'Failed to resolve handle' }, 500);
   }
 });
 
-// GET /v1/handles/:handle - Resolve handle to public key
-// @deprecated Use POST /v1/edge/resolve instead
-// ⚠️ SECURITY: Handle appears in URL path and server logs
-// SECURITY: Updated to NOT return identity public key
+/**
+ * GET /v1/handles/:handle - Resolve handle to edge info
+ * @deprecated Use POST /v1/edge/resolve instead (handle in URL is a privacy leak)
+ */
 handleRoutes.get('/:handle', async (c) => {
-  // Add deprecation header
   c.header('X-Deprecated', 'Use POST /v1/edge/resolve instead');
   
-  const handle = c.req.param('handle');
+  const handle = c.req.param('handle')?.trim().toLowerCase();
 
   if (!handle) {
     return c.json({ error: 'Handle is required' }, 400);
   }
 
   try {
-    // Query edges table for native edge (handle) - NO identity join
-    const result = await db
+    // Query native edge by address
+    const [result] = await db
       .select({
         handle: edges.address,
         displayName: sql<string>`${edges.metadata}->>'displayName'`,
-        x25519PublicKey: edges.x25519PublicKey,  // Edge-level encryption key
+        x25519PublicKey: edges.x25519PublicKey,
         edgeId: edges.id,
         createdAt: edges.createdAt,
       })
@@ -217,56 +228,68 @@ handleRoutes.get('/:handle', async (c) => {
       ))
       .limit(1);
 
-    if (result.length === 0) {
+    if (!result) {
       return c.json({ error: 'Handle not found' }, 404);
     }
 
-    const resolved = result[0];
-
-    // Return ONLY edge data - NO identity public key
+    // SECURITY: Return ONLY edge data - NO identity information
     return c.json({
-      handle: resolved.handle,
-      displayName: resolved.displayName,
-      x25519PublicKey: resolved.x25519PublicKey,
-      edgeId: resolved.edgeId,
-      createdAt: resolved.createdAt,
-      // NOTE: publicKey (identity key) intentionally NOT returned for privacy
+      handle: result.handle,
+      displayName: result.displayName,
+      x25519PublicKey: result.x25519PublicKey,
+      edgeId: result.edgeId,
+      createdAt: result.createdAt,
     });
   } catch (error) {
-    console.error('Error resolving handle:', {
-      code: (error as any).code,
-      message: 'Failed to resolve handle',
-    });
+    console.error('Error resolving handle:', error);
     return c.json({ error: 'Failed to resolve handle' }, 500);
   }
 });
 
-// DELETE /v1/handles/:id - Delete a handle
+/**
+ * DELETE /v1/handles/:id - Delete a handle (burn the edge)
+ * 
+ * Burns the native edge, making it untraceable.
+ */
 handleRoutes.delete('/:id', authMiddleware, async (c) => {
   const identityId = c.get('identityId') as string;
-  const handleId = c.req.param('id');
+  const edgeId = c.req.param('id');
 
-  if (!handleId) {
+  if (!edgeId) {
     return c.json({ error: 'Handle ID is required' }, 400);
   }
 
   try {
-    // Verify ownership and delete
-    const result = await db
-      .delete(handles)
-      .where(eq(handles.id, handleId))
-      .returning({ id: handles.id, identityId: handles.identityId });
+    // SECURITY: Verify ownership via ownerQueryKey
+    const ownerQueryKey = computeQueryKey(identityId);
+    
+    const [edge] = await db
+      .select({ id: edges.id, ownerQueryKey: edges.ownerQueryKey })
+      .from(edges)
+      .where(eq(edges.id, edgeId))
+      .limit(1);
 
-    if (result.length === 0) {
+    if (!edge) {
       return c.json({ error: 'Handle not found' }, 404);
     }
 
-    // Verify the handle belonged to the authenticated user
-    if (result[0].identityId !== identityId) {
+    if (edge.ownerQueryKey !== ownerQueryKey) {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    return c.json({ message: 'Handle deleted', id: handleId });
+    // Burn the edge (NULL ownerQueryKey, set status to burned)
+    await db
+      .update(edges)
+      .set({
+        ownerQueryKey: sql`NULL`,
+        identityId: sql`NULL`,  // Also NULL any legacy identityId
+        metadata: {},
+        status: 'burned',
+        disabledAt: new Date(),
+      })
+      .where(eq(edges.id, edgeId));
+
+    return c.json({ message: 'Handle deleted', id: edgeId });
   } catch (error) {
     console.error('Error deleting handle:', error);
     return c.json({ error: 'Failed to delete handle' }, 500);

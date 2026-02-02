@@ -8,8 +8,9 @@ import { Hono } from 'hono';
 import { eq, and } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { db } from '../db/index.js';
-import { handles, identities, edges, conversations, conversationParticipants, messages, type SecurityLevel, type EdgeType } from '../db/schema.js';
+import { identities, edges, conversations, conversationParticipants, messages, type SecurityLevel, type EdgeType } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { computeQueryKey } from '../lib/queryKey.js';
 
 export const messageRoutes = new Hono();
 
@@ -80,13 +81,15 @@ messageRoutes.post('/', async (c) => {
   }
 
   try {
-    // 1. Verify sender owns the edge
+    // 1. Verify sender owns the edge via ownerQueryKey (not identity_id)
+    const senderQueryKey = computeQueryKey(senderIdentityId);
+    
     const [senderEdge] = await db
       .select()
       .from(edges)
       .where(and(
         eq(edges.id, body.edge_id),
-        eq(edges.identityId, senderIdentityId)
+        eq(edges.ownerQueryKey, senderQueryKey)
       ))
       .limit(1);
 
@@ -95,7 +98,6 @@ messageRoutes.post('/', async (c) => {
     }
 
     let conversationId = body.conversation_id;
-    let recipientIdentityId: string | null = null;
     let recipientEdgeId: string | null = null;
     let isNewConversation = false;
 
@@ -112,8 +114,8 @@ messageRoutes.post('/', async (c) => {
         return c.json({ error: 'Conversation not found' }, 404);
       }
 
-      // Check by edge ID first (new model), fallback to identity ID
-      let participation = await db
+      // SECURITY: Verify participation via edge ID only (no identity fallback)
+      const participation = await db
         .select()
         .from(conversationParticipants)
         .where(and(
@@ -124,19 +126,6 @@ messageRoutes.post('/', async (c) => {
         .then(r => r[0]);
 
       if (!participation) {
-        // Fallback to identity-based check (for backwards compat)
-        participation = await db
-          .select()
-          .from(conversationParticipants)
-          .where(and(
-            eq(conversationParticipants.conversationId, conversationId),
-            eq(conversationParticipants.identityId, senderIdentityId)
-          ))
-          .limit(1)
-          .then(r => r[0]);
-      }
-
-      if (!participation) {
         return c.json({ error: 'Not a participant in this conversation' }, 403);
       }
     } else if (body.recipient_handle) {
@@ -145,11 +134,11 @@ messageRoutes.post('/', async (c) => {
         return c.json({ error: 'recipient_handle is only valid for native origin' }, 400);
       }
 
-      // Resolve recipient edge
+      // Resolve recipient edge by address (handle = native edge address)
+      // SECURITY: We only need the edge ID, not the identity
       const [recipientEdge] = await db
         .select({
           id: edges.id,
-          identityId: edges.identityId,
           address: edges.address,
         })
         .from(edges)
@@ -161,40 +150,16 @@ messageRoutes.post('/', async (c) => {
         .limit(1);
 
       if (recipientEdge) {
-        recipientIdentityId = recipientEdge.identityId;
         recipientEdgeId = recipientEdge.id;
       } else {
-        // Fallback to handles table (legacy) - but we still need the edge
-        const [recipientHandle] = await db
-          .select({ identityId: handles.identityId })
-          .from(handles)
-          .where(eq(handles.handle, body.recipient_handle))
-          .limit(1);
-
-        if (!recipientHandle) {
-          return c.json({ error: 'Recipient handle not found' }, 404);
-        }
-        recipientIdentityId = recipientHandle.identityId;
-        
-        // Try to find a native edge for this identity
-        const [legacyEdge] = await db
-          .select({ id: edges.id })
-          .from(edges)
-          .where(and(
-            eq(edges.identityId, recipientIdentityId),
-            eq(edges.isNative, true),
-            eq(edges.status, 'active')
-          ))
-          .limit(1);
-        
-        recipientEdgeId = legacyEdge?.id || null;
+        // No native edge with that address found
+        return c.json({ error: 'Recipient handle not found' }, 404);
       }
 
-      // Check for existing conversation between these two edges (preferred)
-      // or between these two identities (fallback)
+      // Check for existing conversation between these two edges
       let existingConversationId: string | undefined = undefined;
       
-      // First try edge-based lookup
+      // Edge-based lookup only - no identity fallback for privacy
       if (recipientEdgeId) {
         const senderEdgeConversations = await db
           .select({ conversationId: conversationParticipants.conversationId })
@@ -218,29 +183,8 @@ messageRoutes.post('/', async (c) => {
         }
       }
       
-      // Fallback to identity-based lookup
-      if (!existingConversationId) {
-        const senderConversations = await db
-          .select({ conversationId: conversationParticipants.conversationId })
-          .from(conversationParticipants)
-          .where(eq(conversationParticipants.identityId, senderIdentityId));
-
-        for (const conv of senderConversations) {
-          const participants = await db
-            .select({ identityId: conversationParticipants.identityId })
-            .from(conversationParticipants)
-            .where(eq(conversationParticipants.conversationId, conv.conversationId));
-
-          const participantIds = participants.map(p => p.identityId);
-          
-          if (participantIds.length === 2 && 
-              participantIds.includes(senderIdentityId) && 
-              participantIds.includes(recipientIdentityId)) {
-            existingConversationId = conv.conversationId;
-            break;
-          }
-        }
-      }
+      // SECURITY: Removed identity-based fallback - only edge-based lookups
+      // This preserves unlinkability: server cannot correlate edges to identities
       
       conversationId = existingConversationId;
 
@@ -260,18 +204,18 @@ messageRoutes.post('/', async (c) => {
           createdAt: now,
         });
 
-        // Add both participants with edge IDs
+        // Add both participants with edge IDs only - NO identityId for unlinkability
         await db.insert(conversationParticipants).values([
           {
             conversationId,
-            identityId: senderIdentityId,
+            // SECURITY: Do NOT store identityId - breaks unlinkability
             edgeId: body.edge_id,
             isOwner: true,
             joinedAt: now,
           },
           {
             conversationId,
-            identityId: recipientIdentityId,
+            // SECURITY: Do NOT store identityId - breaks unlinkability
             edgeId: recipientEdgeId ?? undefined,
             isOwner: false,
             joinedAt: now,
@@ -346,15 +290,16 @@ messageRoutes.post('/', async (c) => {
       console.log(`Gateway message for origin: ${body.origin} - stored for worker processing`);
     }
 
-    // 6. Get recipient public key if this was a new conversation (client needs it for encryption)
-    let recipientPublicKey: string | null = null;
-    if (recipientIdentityId) {
-      const [recipient] = await db
-        .select({ publicKey: identities.publicKey })
-        .from(identities)
-        .where(eq(identities.id, recipientIdentityId))
+    // 6. Get recipient's X25519 public key if this was a new conversation (client needs it for encryption)
+    // SECURITY: We get this from the edge, not by querying identity
+    let recipientX25519Key: string | null = null;
+    if (recipientEdgeId) {
+      const [recipEdge] = await db
+        .select({ x25519PublicKey: edges.x25519PublicKey })
+        .from(edges)
+        .where(eq(edges.id, recipientEdgeId))
         .limit(1);
-      recipientPublicKey = recipient?.publicKey || null;
+      recipientX25519Key = recipEdge?.x25519PublicKey || null;
     }
 
     return c.json({
@@ -362,7 +307,7 @@ messageRoutes.post('/', async (c) => {
       message_id: messageId,
       conversation_id: conversationId,
       is_new_conversation: isNewConversation,
-      recipient_public_key: recipientPublicKey,
+      recipient_x25519_key: recipientX25519Key,  // X25519 key for encryption
       created_at: now.toISOString(),
     }, isNewConversation ? 201 : 200);
 

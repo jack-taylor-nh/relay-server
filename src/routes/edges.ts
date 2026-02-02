@@ -299,9 +299,11 @@ edgeRoutes.post('/', async (c) => {
   // Compute zero-knowledge query key for edge ownership
   const ownerQueryKey = computeQueryKey(identityId);
 
+  // SECURITY: Do NOT store identityId - use ownerQueryKey for ownership verification
+  // This preserves edge unlinkability - can't trace edge → identity from DB alone
   await db.insert(edges).values({
     id: edgeId,
-    identityId,
+    // identityId intentionally NOT stored - breaks unlinkability
     ownerQueryKey,
     type: body.type,
     bridgeType: body.type,
@@ -445,7 +447,9 @@ edgeRoutes.delete('/:id', async (c) => {
 
   const identityId = computeFingerprint(publicKey);
 
-  // Find edge and verify ownership
+  // Find edge and verify ownership via ownerQueryKey (not identity_id)
+  const expectedQueryKey = computeQueryKey(identityId);
+  
   const [edge] = await db
     .select()
     .from(edges)
@@ -456,7 +460,8 @@ edgeRoutes.delete('/:id', async (c) => {
     return c.json({ code: 'EDGE_NOT_FOUND', message: 'Edge not found' }, 404);
   }
 
-  if (edge.identityId !== identityId) {
+  // SECURITY: Verify ownership via ownerQueryKey, not identity_id
+  if (edge.ownerQueryKey !== expectedQueryKey) {
     return c.json({ code: 'FORBIDDEN', message: 'You do not own this edge' }, 403);
   }
 
@@ -503,7 +508,9 @@ edgeRoutes.post('/:id/burn', async (c) => {
 
   const identityId = computeFingerprint(publicKey);
 
-  // Find edge and verify ownership
+  // Find edge and verify ownership via ownerQueryKey (not identity_id)
+  const expectedQueryKey = computeQueryKey(identityId);
+  
   const [edge] = await db
     .select()
     .from(edges)
@@ -514,7 +521,8 @@ edgeRoutes.post('/:id/burn', async (c) => {
     return c.json({ code: 'EDGE_NOT_FOUND', message: 'Edge not found' }, 404);
   }
 
-  if (edge.identityId !== identityId) {
+  // SECURITY: Verify ownership via ownerQueryKey, not identity_id
+  if (edge.ownerQueryKey !== expectedQueryKey) {
     return c.json({ code: 'FORBIDDEN', message: 'You do not own this edge' }, 403);
   }
 
@@ -522,13 +530,15 @@ edgeRoutes.post('/:id/burn', async (c) => {
     return c.json({ code: 'ALREADY_BURNED', message: 'Edge is already burned' }, 400);
   }
 
-  // Burn the edge: NULL all linkable data to make permanently untraceable
+  // Burn the edge: NULL ownerQueryKey to make permanently untraceable
   // Address stays to prevent collision but becomes anonymous
+  // Note: identityId is no longer stored, so only ownerQueryKey needs nulling
   await db
     .update(edges)
     .set({
       ownerQueryKey: sql`NULL`,  // Critical: breaks zero-knowledge query linkage
-      identityId: sql`NULL`,     // Unlink from identity (untraceable)
+      // identityId already not stored in new edges, but NULL any legacy values
+      identityId: sql`NULL`,
       metadata: {},              // Clear encrypted data (handle, displayName, etc.)
       status: 'burned',
       disabledAt: new Date(),
@@ -572,7 +582,9 @@ edgeRoutes.patch('/:id', async (c) => {
 
   const identityId = computeFingerprint(publicKey);
 
-  // Find edge and verify ownership
+  // Find edge and verify ownership via ownerQueryKey (not identity_id)
+  const expectedQueryKey = computeQueryKey(identityId);
+  
   const [edge] = await db
     .select()
     .from(edges)
@@ -583,7 +595,8 @@ edgeRoutes.patch('/:id', async (c) => {
     return c.json({ code: 'EDGE_NOT_FOUND', message: 'Edge not found' }, 404);
   }
 
-  if (edge.identityId !== identityId) {
+  // SECURITY: Verify ownership via ownerQueryKey, not identity_id
+  if (edge.ownerQueryKey !== expectedQueryKey) {
     return c.json({ code: 'FORBIDDEN', message: 'You do not own this edge' }, 403);
   }
 
