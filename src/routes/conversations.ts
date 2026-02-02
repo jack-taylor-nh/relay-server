@@ -86,16 +86,40 @@ conversationRoutes.get('/', async (c) => {
       // Find counterparty
       const counterparty = parts.find(p => p.identityId !== identityId);
       
-      // For native conversations, get counterparty's handle
+      // For native conversations, get counterparty's handle and edge info
       let counterpartyHandle = null;
+      let counterpartyEdgeId = null;
+      let counterpartyX25519Key = null;
       if (conv.origin === 'native' && counterparty?.identityId) {
+        // Get handle info
         const [handleResult] = await db
-          .select({ handle: handles.handle, displayName: handles.displayName })
+          .select({ 
+            handle: handles.handle, 
+            displayName: handles.displayName,
+          })
           .from(handles)
           .where(eq(handles.identityId, counterparty.identityId))
           .limit(1);
         if (handleResult) {
           counterpartyHandle = handleResult.handle;
+          
+          // Find the native edge for this handle (address matches handle name)
+          const [edgeResult] = await db
+            .select({ 
+              id: edges.id,
+              x25519PublicKey: edges.x25519PublicKey 
+            })
+            .from(edges)
+            .where(and(
+              eq(edges.type, 'native'),
+              eq(edges.address, handleResult.handle),
+              eq(edges.status, 'active')
+            ))
+            .limit(1);
+          if (edgeResult) {
+            counterpartyEdgeId = edgeResult.id;
+            counterpartyX25519Key = edgeResult.x25519PublicKey;
+          }
         }
       }
       
@@ -116,6 +140,8 @@ conversationRoutes.get('/', async (c) => {
           externalId: counterparty.externalId,
           displayName: counterparty.displayName,
           handle: counterpartyHandle,
+          edgeId: counterpartyEdgeId,
+          x25519PublicKey: counterpartyX25519Key,
         } : null,
         lastActivityAt: conv.lastActivityAt.toISOString(),
         createdAt: conv.createdAt.toISOString(),
