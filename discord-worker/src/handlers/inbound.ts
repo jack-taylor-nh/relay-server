@@ -199,6 +199,7 @@ export async function handleInboundDM(message: Message): Promise<void> {
  * Handle the /relay slash command
  * This is the preferred method as it shows up as a real Discord command
  * 
+ * If run in a public channel, we redirect the conversation to DMs.
  * If a conversation already exists with this Relay handle, we edit the existing
  * conversation message. Otherwise, we create a new one.
  */
@@ -207,6 +208,9 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
   const discordUsername = interaction.user.tag;
   const discordDisplayName = interaction.user.displayName;
   
+  // Check if this is in a DM or public channel
+  const isInDM = !interaction.guild;
+  
   // Get command options
   const handleInput = interaction.options.getString('handle', true);
   const messageContent = interaction.options.getString('message', true);
@@ -214,10 +218,10 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
   // Clean the handle (remove & or @ if present)
   const targetHandle = handleInput.replace(/^[&@]/, '').toLowerCase();
   
-  console.log(`📥 /relay from ${discordUsername} → &${targetHandle}: "${messageContent.substring(0, 50)}..."`);
+  console.log(`📥 /relay from ${discordUsername} → &${targetHandle}: "${messageContent.substring(0, 50)}..." (${isInDM ? 'DM' : 'public channel'})`);
   
-  // Defer reply - this creates a new message in the DM
-  await interaction.deferReply();
+  // Defer reply - ephemeral if in public channel (only visible to user)
+  await interaction.deferReply({ ephemeral: !isInDM });
   
   // Look up target Relay edge by handle
   const edgeInfo = await lookupEdgeByHandle(targetHandle);
@@ -309,8 +313,12 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
         // Edit the conversation message
         await conversationMessage.edit(newContent);
         
-        // Delete the deferred reply (we don't need a new message)
-        await interaction.deleteReply();
+        // Update the slash command reply
+        if (isInDM) {
+          await interaction.deleteReply();
+        } else {
+          await interaction.editReply(`✅ Message sent to **&${targetHandle}**. Check your DMs for the conversation.`);
+        }
         
         console.log(`✅ Appended to existing conversation message ${existingConversation.conversationMessageId}`);
         return;
@@ -321,19 +329,40 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
       }
     }
     
-    // Create new conversation message
+    // Build new conversation message content
     let conversationContent = `💬 **Conversation with &${targetHandle}**\n`;
     conversationContent += `━━━━━━━━━━━━━━━━━━━━\n\n`;
     conversationContent += `**You** _(${timestamp})_:\n${messageContent}\n\n`;
     conversationContent += `━━━━━━━━━━━━━━━━━━━━\n`;
     conversationContent += `_Reply with_ \`/relay &${targetHandle} your message\``;
     
-    const replyMessage = await interaction.editReply(conversationContent);
+    let conversationMessageId: string | undefined;
+    
+    if (isInDM) {
+      // In DM - use the interaction reply as the conversation message
+      const replyMessage = await interaction.editReply(conversationContent);
+      if (replyMessage && 'id' in replyMessage) {
+        conversationMessageId = replyMessage.id;
+      }
+    } else {
+      // In public channel - send conversation to DMs, reply ephemerally
+      try {
+        const user = await interaction.client.users.fetch(discordUserId);
+        const dmMessage = await user.send(conversationContent);
+        conversationMessageId = dmMessage.id;
+        
+        await interaction.editReply(`✅ Message sent to **&${targetHandle}**. Check your DMs for the conversation.`);
+      } catch (dmError) {
+        console.error('Could not send DM:', dmError);
+        await interaction.editReply(`❌ Could not send you a DM. Please make sure your DMs are open, or use this command in a DM with me.`);
+        return;
+      }
+    }
     
     // Store the conversation message ID for future edits
-    if (replyMessage && 'id' in replyMessage) {
+    if (conversationMessageId) {
       try {
-        await updateConversationMessageId(conversationId, replyMessage.id);
+        await updateConversationMessageId(conversationId, conversationMessageId);
       } catch (updateError) {
         console.warn('Could not update conversation message ID:', updateError);
       }
