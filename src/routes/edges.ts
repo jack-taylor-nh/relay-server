@@ -200,9 +200,10 @@ edgeRoutes.post('/', async (c) => {
     x25519PublicKey: string;
     nonce: string;
     signature: string;
-    label?: string;
+    // Encrypted fields (client-side encrypted, server stores opaque blob)
+    encryptedLabel?: string;
+    encryptedMetadata?: string;
     customAddress?: string; // For handles/contact links
-    displayName?: string;   // For handles
   }>();
 
   if (!body.type || !body.publicKey || !body.nonce || !body.signature) {
@@ -272,9 +273,10 @@ edgeRoutes.post('/', async (c) => {
       }
 
       address = handleName;
+      // Store encrypted metadata (opaque to server)
       metadata = {
         handle: handleName,
-        displayName: body.displayName || null,
+        encrypted: body.encryptedMetadata || null,
       };
 
       break;
@@ -309,7 +311,8 @@ edgeRoutes.post('/', async (c) => {
     bridgeType: body.type,
     isNative: body.type === 'native',
     address,
-    label: body.label,
+    // Store encrypted label (opaque to server)
+    label: body.encryptedLabel || null,
     status: 'active',
     securityLevel: edgeType.securityLevel,
     x25519PublicKey: body.x25519PublicKey || null,
@@ -321,10 +324,11 @@ edgeRoutes.post('/', async (c) => {
     id: edgeId,
     type: body.type,
     address: body.type === 'native' ? address : address,
-    label: body.label,
+    // Return encrypted values for client to decrypt
+    encryptedLabel: body.encryptedLabel || null,
+    encryptedMetadata: body.encryptedMetadata || null,
     status: 'active',
     securityLevel: edgeType.securityLevel,
-    metadata,
     createdAt: now.toISOString(),
   }, 201);
 });
@@ -364,11 +368,13 @@ edgeRoutes.get('/', async (c) => {
       id: edge.id,
       type: edge.type,
       address: edge.isNative ? edge.address : edge.address,
-      label: edge.label,
+      // Return encrypted label for client to decrypt
+      encryptedLabel: edge.label,
+      // Return encrypted metadata for client to decrypt
+      encryptedMetadata: (edge.metadata as any)?.encrypted || null,
       status: edge.status,
       securityLevel: edge.securityLevel,
       messageCount: edge.messageCount,
-      metadata: edge.metadata, // Includes handle/displayName for native edges
       hasX25519: !!edge.x25519PublicKey, // Client can check if migration needed
       createdAt: edge.createdAt.toISOString(),
       lastActivityAt: edge.lastActivityAt?.toISOString() || null,

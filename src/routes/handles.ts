@@ -32,7 +32,8 @@ handleRoutes.post('/', authMiddleware, async (c) => {
   const identityId = c.get('identityId') as string;
   const body = await c.req.json();
 
-  const { handle, displayName, x25519PublicKey } = body;
+  // Accept encrypted metadata instead of plaintext displayName
+  const { handle, encryptedMetadata, x25519PublicKey } = body;
 
   // Validate handle format
   if (!handle || typeof handle !== 'string') {
@@ -60,6 +61,7 @@ handleRoutes.post('/', authMiddleware, async (c) => {
     const ownerQueryKey = computeQueryKey(identityId);
     
     // Create native edge - this IS the handle
+    // Store encrypted metadata as opaque blob (server cannot read)
     const [nativeEdge] = await db.insert(edges).values({
       id: edgeId,
       // SECURITY: Do NOT store identityId - use ownerQueryKey for ownership
@@ -68,20 +70,22 @@ handleRoutes.post('/', authMiddleware, async (c) => {
       bridgeType: 'native',
       isNative: true,
       address: handle,  // Handle name is the edge address
-      label: displayName || handle,
+      label: null,      // Label is now encrypted client-side
       status: 'active',
       securityLevel: 'e2ee',
       x25519PublicKey,
-      metadata: displayName ? { displayName } : {},
+      // Store encrypted metadata (opaque to server)
+      metadata: encryptedMetadata ? { encrypted: encryptedMetadata } : {},
       createdAt: now,
       messageCount: 0,
     }).returning();
 
     // Return response compatible with old handles API
+    // Note: displayName is now encrypted, client will decrypt
     return c.json({
       id: nativeEdge.id,  // Edge ID serves as handle ID
       handle: nativeEdge.address,
-      displayName: displayName || null,
+      encryptedMetadata: encryptedMetadata || null,
       createdAt: nativeEdge.createdAt,
       updatedAt: nativeEdge.createdAt,
       nativeEdge: {
