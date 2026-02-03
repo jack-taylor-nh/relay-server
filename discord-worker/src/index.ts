@@ -21,9 +21,9 @@
  */
 
 import 'dotenv/config';
-import { Client, GatewayIntentBits, Events, Partials, Message } from 'discord.js';
+import { Client, GatewayIntentBits, Events, Partials, Message, ChatInputCommandInteraction } from 'discord.js';
 import { createServer } from 'http';
-import { handleInboundDM } from './handlers/inbound.js';
+import { handleInboundDM, handleSlashCommand } from './handlers/inbound.js';
 import { createHttpServer } from './http/server.js';
 import { getWorkerPublicKey } from './crypto.js';
 
@@ -48,6 +48,7 @@ const client = new Client({
   intents: [
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.Guilds, // Required for slash commands
   ],
   partials: [
     Partials.Channel, // Required for DM events
@@ -62,7 +63,7 @@ client.once(Events.ClientReady, (readyClient) => {
   console.log(`   Worker Public Key: ${getWorkerPublicKey().substring(0, 20)}...`);
 });
 
-// Handle incoming DMs
+// Handle incoming DMs (legacy text-based fallback)
 client.on(Events.MessageCreate, async (message: Message) => {
   // Ignore bot messages
   if (message.author.bot) return;
@@ -77,6 +78,29 @@ client.on(Events.MessageCreate, async (message: Message) => {
   } catch (error) {
     console.error('Error handling DM:', error);
     // Don't reply with error to avoid leaking info
+  }
+});
+
+// Handle slash command interactions
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  
+  if (interaction.commandName === 'relay') {
+    console.log(`📥 Received /relay command from ${interaction.user.tag} (${interaction.user.id})`);
+    
+    try {
+      await handleSlashCommand(interaction as ChatInputCommandInteraction);
+    } catch (error) {
+      console.error('Error handling slash command:', error);
+      
+      // Reply with generic error (safe to show since slash commands are explicit)
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ 
+          content: '❌ Sorry, something went wrong. Please try again later.',
+          ephemeral: true 
+        });
+      }
+    }
   }
 });
 

@@ -239,7 +239,60 @@ export const messages = pgTable('messages', {
 // Note: emailAliases table removed - edges table now handles all contact surfaces
 
 // ============================================
-// Email Messages (metadata for email origin)
+// Bridge Messages (unified metadata for all bridge origins)
+// ============================================
+
+/**
+ * Platform-specific metadata structures for bridge messages
+ */
+export type EmailBridgeMetadata = {
+  fromAddressHash: string;  // Hashed email for privacy
+  subject?: string;
+  emailMessageId?: string;  // Message-ID header for threading
+  inReplyTo?: string;       // In-Reply-To header
+};
+
+export type DiscordBridgeMetadata = {
+  discordUserId: string;    // Discord user ID for reply routing
+  discordTag?: string;      // e.g., "User#1234"
+  discordMessageId?: string;
+};
+
+export type SlackBridgeMetadata = {
+  slackUserId: string;
+  slackTeamId: string;
+  channelId?: string;
+  threadTs?: string;
+};
+
+// Union type for all bridge metadata
+export type BridgeMetadata = 
+  | EmailBridgeMetadata 
+  | DiscordBridgeMetadata 
+  | SlackBridgeMetadata
+  | Record<string, unknown>; // Extensible for future bridges
+
+export const bridgeMessages = pgTable('bridge_messages', {
+  /** References the message ID */
+  messageId: text('message_id').references(() => messages.id).primaryKey(),
+  /** Bridge type: email, discord, slack, sms, etc. */
+  bridgeType: text('bridge_type').notNull().$type<EdgeType>(),
+  /** External sender identifier (hashed email, discord user ID, etc.) - used for conversation matching */
+  senderExternalId: text('sender_external_id').notNull(),
+  /** Display name from the external platform */
+  senderDisplayName: text('sender_display_name'),
+  /** Message ID on the external platform (for threading, deduplication) */
+  platformMessageId: text('platform_message_id'),
+  /** Platform-specific metadata (JSONB for flexibility) */
+  metadata: jsonb('metadata').$type<BridgeMetadata>(),
+}, (table) => ({
+  bridgeTypeIdx: index('bridge_messages_bridge_type_idx').on(table.bridgeType),
+  senderIdx: index('bridge_messages_sender_idx').on(table.senderExternalId),
+}));
+
+// ============================================
+// DEPRECATED: Email Messages (keeping for migration compatibility)
+// TODO: Migrate data to bridge_messages and remove
 // ============================================
 
 export const emailMessages = pgTable('email_messages', {
@@ -256,7 +309,8 @@ export const emailMessages = pgTable('email_messages', {
 });
 
 // ============================================
-// Discord Messages (metadata for discord origin)
+// DEPRECATED: Discord Messages (keeping for migration compatibility)
+// TODO: Migrate data to bridge_messages and remove
 // ============================================
 
 export const discordMessages = pgTable('discord_messages', {
@@ -327,6 +381,9 @@ export type NewConversation = typeof conversations.$inferInsert;
 
 export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
+
+export type BridgeMessage = typeof bridgeMessages.$inferSelect;
+export type NewBridgeMessage = typeof bridgeMessages.$inferInsert;
 
 export type ConversationParticipant = typeof conversationParticipants.$inferSelect;
 export type NewConversationParticipant = typeof conversationParticipants.$inferInsert;

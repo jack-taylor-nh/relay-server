@@ -14,7 +14,7 @@
  * a Relay user through the bridge.
  */
 
-import { Message } from 'discord.js';
+import { Message, ChatInputCommandInteraction } from 'discord.js';
 import { lookupEdgeByHandle, forwardToApi } from '../api.js';
 import { encryptPayload, hashDiscordId } from '../crypto.js';
 
@@ -113,6 +113,72 @@ export async function handleInboundDM(message: Message): Promise<void> {
   } catch (error) {
     console.error('Failed to forward message:', error);
     await message.reply('❌ Failed to send message. Please try again later.');
+  }
+}
+
+/**
+ * Handle the /relay slash command
+ * This is the preferred method as it shows up as a real Discord command
+ */
+export async function handleSlashCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  const discordUserId = interaction.user.id;
+  const discordUsername = interaction.user.tag;
+  const discordDisplayName = interaction.user.displayName;
+  
+  // Get command options
+  const handleInput = interaction.options.getString('handle', true);
+  const messageContent = interaction.options.getString('message', true);
+  
+  // Clean the handle (remove @ if present)
+  const targetHandle = handleInput.replace(/^@/, '').toLowerCase();
+  
+  console.log(`📥 /relay from ${discordUsername} → @${targetHandle}: "${messageContent.substring(0, 50)}..."`);
+  
+  // Defer reply to give us time to process
+  await interaction.deferReply({ ephemeral: true });
+  
+  // Look up target Relay edge by handle
+  const edgeInfo = await lookupEdgeByHandle(targetHandle);
+  
+  if (!edgeInfo) {
+    await interaction.editReply(`❌ Relay user \`@${targetHandle}\` not found. Check the handle and try again.`);
+    return;
+  }
+  
+  // Hash sender's Discord ID for conversation matching
+  const senderHash = await hashDiscordId(discordUserId);
+  
+  // Build message payload (will be encrypted)
+  const messagePayload = {
+    content: messageContent,
+    senderDiscordId: discordUserId,
+    senderDiscordTag: discordUsername,
+    senderDisplayName: discordDisplayName,
+    messageId: interaction.id,
+    timestamp: new Date().toISOString(),
+  };
+  
+  // Encrypt payload with target Relay edge's X25519 public key (zero-knowledge)
+  const encryptedPayload = encryptPayload(messagePayload, edgeInfo.x25519PublicKey);
+  
+  // Forward to Relay API
+  try {
+    await forwardToApi({
+      edgeId: edgeInfo.id,
+      senderHash,
+      senderDiscordId: discordUserId,  // Store for reply routing
+      encryptedPayload,
+      receivedAt: new Date().toISOString(),
+      senderDisplayName: discordUsername,
+    });
+    
+    // Confirm receipt
+    await interaction.editReply(`📨 Message sent to \`@${targetHandle}\`! They'll see it in Relay and can reply here.`);
+    
+    console.log(`✅ Message forwarded to Relay edge ${edgeInfo.id}`);
+  } catch (error) {
+    console.error('Failed to forward message:', error);
+    await interaction.editReply('❌ Failed to send message. Please try again later.');
   }
 }
 

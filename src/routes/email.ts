@@ -13,7 +13,7 @@ import { ulid } from 'ulid';
 import { Resend } from 'resend';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
-import { db, edges, conversations, conversationParticipants, messages, emailMessages } from '../db/index.js';
+import { db, edges, conversations, conversationParticipants, messages, bridgeMessages, type EmailBridgeMetadata } from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { computeQueryKey } from '../lib/queryKey.js';
 
@@ -195,13 +195,17 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
     createdAt: now,
   });
 
-  // Store email-specific metadata (minimal, for threading)
-  await db.insert(emailMessages).values({
+  // Store bridge metadata for email (unified table)
+  await db.insert(bridgeMessages).values({
     messageId,
-    fromAddressHash: body.senderHash,
-    subject: null,        // Subject is encrypted
-    emailMessageId: null, // MessageId is encrypted
-    inReplyTo: null,      // InReplyTo is encrypted
+    bridgeType: 'email',
+    senderExternalId: body.senderHash,
+    senderDisplayName: null,  // Name is in encrypted payload
+    platformMessageId: null,  // MessageId is encrypted
+    metadata: {
+      fromAddressHash: body.senderHash,
+      // These are encrypted in the payload - only set when known
+    } as EmailBridgeMetadata,
   });
 
   // Update conversation last activity
@@ -322,19 +326,22 @@ emailRoutes.post('/send', authMiddleware, async (c) => {
     return c.json({ code: 'NO_RECIPIENT', message: 'Cannot find recipient' }, 400);
   }
 
-  // Get original email metadata for reply context
+  // Get original email metadata for reply context from bridge_messages
   const originalMessages = await db
     .select({
-      subject: emailMessages.subject,
-      emailMessageId: emailMessages.emailMessageId,
+      metadata: bridgeMessages.metadata,
     })
-    .from(emailMessages)
-    .innerJoin(messages, eq(messages.id, emailMessages.messageId))
-    .where(eq(messages.conversationId, body.conversationId))
+    .from(bridgeMessages)
+    .innerJoin(messages, eq(messages.id, bridgeMessages.messageId))
+    .where(and(
+      eq(messages.conversationId, body.conversationId),
+      eq(bridgeMessages.bridgeType, 'email')
+    ))
     .orderBy(messages.createdAt)
     .limit(1);
 
-  const originalSubject = originalMessages[0]?.subject || '(no subject)';
+  const emailMeta = originalMessages[0]?.metadata as EmailBridgeMetadata | undefined;
+  const originalSubject = emailMeta?.subject || '(no subject)';
   const replySubject = originalSubject.startsWith('Re:') ? originalSubject : `Re: ${originalSubject}`;
 
   // Client must decrypt the first message in conversation to get sender's email
@@ -344,7 +351,7 @@ emailRoutes.post('/send', authMiddleware, async (c) => {
     requiresMessageDecryption: true,
     edgeAddress: edge.address,
     replySubject,
-    inReplyTo: originalMessages[0]?.emailMessageId,
+    inReplyTo: emailMeta?.emailMessageId,
   });
 });
 
@@ -437,12 +444,18 @@ emailRoutes.post('/dispatch', authMiddleware, async (c) => {
       createdAt: now,
     });
 
-    // Store email metadata
-    await db.insert(emailMessages).values({
+    // Store email metadata in unified bridge_messages table
+    await db.insert(bridgeMessages).values({
       messageId,
-      fromAddressHash: identityId,
-      subject: body.subject,
-      emailMessageId: data?.id,
+      bridgeType: 'email',
+      senderExternalId: identityId, // For outbound, this is the sender identity
+      senderDisplayName: null,
+      platformMessageId: data?.id,  // Resend message ID
+      metadata: {
+        fromAddressHash: identityId,
+        subject: body.subject,
+        emailMessageId: data?.id,
+      } as EmailBridgeMetadata,
     });
 
     // Update conversation

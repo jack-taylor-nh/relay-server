@@ -12,7 +12,7 @@ import { eq, and, inArray } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
-import { db, edges, conversations, conversationParticipants, messages, discordMessages } from '../db/index.js';
+import { db, edges, conversations, conversationParticipants, messages, bridgeMessages, type DiscordBridgeMetadata } from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { computeQueryKey } from '../lib/queryKey.js';
 
@@ -154,11 +154,17 @@ discordRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
     createdAt: now,
   });
 
-  // Store Discord-specific metadata for reply routing
-  await db.insert(discordMessages).values({
+  // Store bridge-specific metadata for reply routing (unified table)
+  await db.insert(bridgeMessages).values({
     messageId,
-    senderDiscordId: body.senderDiscordId,
-    senderDiscordTag: body.senderDisplayName || null,
+    bridgeType: 'discord',
+    senderExternalId: body.senderHash,
+    senderDisplayName: body.senderDisplayName || null,
+    platformMessageId: null,
+    metadata: {
+      discordUserId: body.senderDiscordId,
+      discordTag: body.senderDisplayName,
+    } as DiscordBridgeMetadata,
   });
 
   // Update conversation last activity
@@ -258,17 +264,25 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
     return c.json({ code: 'EDGE_DISABLED', message: 'Edge is disabled' }, 410);
   }
 
-  // Look up the Discord user ID from the conversation's messages
+  // Look up the Discord user ID from the conversation's bridge messages
   // Get the most recent inbound message to find the sender's Discord ID
-  const [discordMsg] = await db
-    .select({ senderDiscordId: discordMessages.senderDiscordId })
-    .from(discordMessages)
-    .innerJoin(messages, eq(messages.id, discordMessages.messageId))
-    .where(eq(messages.conversationId, body.conversationId))
+  const [bridgeMsg] = await db
+    .select({ metadata: bridgeMessages.metadata })
+    .from(bridgeMessages)
+    .innerJoin(messages, eq(messages.id, bridgeMessages.messageId))
+    .where(and(
+      eq(messages.conversationId, body.conversationId),
+      eq(bridgeMessages.bridgeType, 'discord')
+    ))
     .limit(1);
 
-  if (!discordMsg) {
+  if (!bridgeMsg || !bridgeMsg.metadata) {
     return c.json({ code: 'NO_RECIPIENT', message: 'Could not find Discord recipient for this conversation' }, 400);
+  }
+
+  const discordMetadata = bridgeMsg.metadata as DiscordBridgeMetadata;
+  if (!discordMetadata.discordUserId) {
+    return c.json({ code: 'NO_RECIPIENT', message: 'Could not find Discord user ID' }, 400);
   }
 
   // Forward to Discord worker with the Discord user ID
@@ -283,7 +297,7 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
       body: JSON.stringify({
         conversationId: body.conversationId,
         content: body.content,
-        recipientDiscordId: discordMsg.senderDiscordId,  // Send directly (trusted worker)
+        recipientDiscordId: discordMetadata.discordUserId,  // Send directly (trusted worker)
         edgeAddress: edge.address,
       }),
     });
