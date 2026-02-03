@@ -162,6 +162,10 @@ export const conversations = pgTable('conversations', {
    * Only the client can decrypt this - server stores opaque blob
    * For native conversations: counterparty.handle is resolved from participants */
   encryptedMetadata: text('encrypted_metadata'),
+  /** Bridge-specific metadata (JSONB) - NOT encrypted, for worker use
+   * For Discord: { conversationMessageId: string } - the bot's DM message ID for editing
+   * For Email: { threadId?: string } - email thread references */
+  bridgeMetadata: jsonb('bridge_metadata'),
   /** Double Ratchet state for E2EE conversations (JSONB) */
   ratchetState: jsonb('ratchet_state'),
   /** When conversation was created */
