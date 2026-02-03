@@ -54,18 +54,19 @@ export const EDGE_TYPES: EdgeTypeDefinition[] = [
     requiresCustomAddress: false,
     enabled: true,
   },
+  {
+    id: 'discord',
+    name: 'Discord',
+    description: 'Receive Discord DMs via Relay',
+    icon: '💬',
+    addressFormat: 'discord:{user_id}',
+    securityLevel: 'gateway_secured',
+    requiresCustomAddress: true,
+    addressPlaceholder: 'your_discord_user_id',
+    addressValidation: /^discord:\d{17,20}$/,  // Discord user IDs are 17-20 digit snowflakes
+    enabled: true,
+  },
   // Future edge types can be added here without client changes!
-  // {
-  //   id: 'discord',
-  //   name: 'Discord',
-  //   description: 'Receive Discord DMs via Relay',
-  //   icon: '💬',
-  //   addressFormat: 'discord:{username}',
-  //   securityLevel: 'gateway_secured',
-  //   requiresCustomAddress: true,
-  //   addressPlaceholder: 'discord_username',
-  //   enabled: false,  // Not ready yet
-  // },
 ];
 
 /**

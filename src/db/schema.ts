@@ -256,6 +256,21 @@ export const emailMessages = pgTable('email_messages', {
 });
 
 // ============================================
+// Discord Messages (metadata for discord origin)
+// ============================================
+
+export const discordMessages = pgTable('discord_messages', {
+  /** References the message ID */
+  messageId: text('message_id').references(() => messages.id).primaryKey(),
+  /** Sender's Discord user ID (for reply routing - stored encrypted for bridge) */
+  senderDiscordId: text('sender_discord_id').notNull(),
+  /** Sender's Discord tag (e.g., "User#1234") for display */
+  senderDiscordTag: text('sender_discord_tag'),
+  /** Discord message ID for reference */
+  discordMessageId: text('discord_message_id'),
+});
+
+// ============================================
 // Abuse Signals
 // ============================================
 
