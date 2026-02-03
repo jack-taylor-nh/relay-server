@@ -108,8 +108,8 @@ export function createHttpServer(discordClient: Client) {
         const body = await parseBody<SendMessageRequest>(req);
         
         // Validate required fields
-        if (!body.content || !body.recipientDiscordId || !body.edgeAddress) {
-          sendJson(res, 400, { error: 'Missing required fields: content, recipientDiscordId, edgeAddress' });
+        if (!body.content || !body.encryptedRecipientId || !body.edgeAddress) {
+          sendJson(res, 400, { error: 'Missing required fields: content, encryptedRecipientId, edgeAddress' });
           return;
         }
         
