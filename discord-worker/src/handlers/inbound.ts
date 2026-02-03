@@ -90,8 +90,16 @@ export async function handleInboundDM(message: Message): Promise<void> {
     timestamp: message.createdAt.toISOString(),
   };
   
+  // Build counterparty metadata for conversation list display
+  // This is separate from message content - stored at conversation level
+  const counterpartyMetadata = {
+    counterpartyDisplayName: message.author.displayName,
+    platform: 'discord',
+  };
+  
   // Encrypt payload with target Relay edge's X25519 public key (zero-knowledge)
   const encryptedPayload = encryptPayload(messagePayload, edgeInfo.x25519PublicKey);
+  const encryptedMetadata = encryptPayload(counterpartyMetadata, edgeInfo.x25519PublicKey);
   
   // Forward to Relay API
   // Note: senderHash for matching, encryptedDiscordId for reply routing (only worker can decrypt)
@@ -101,6 +109,7 @@ export async function handleInboundDM(message: Message): Promise<void> {
       senderHash,
       encryptedRecipientId: encryptedDiscordId,  // Encrypted for worker's key
       encryptedPayload,
+      encryptedMetadata,  // Encrypted counterparty info for conversation list
       receivedAt: new Date().toISOString(),
     });
     
@@ -161,8 +170,16 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
     timestamp: new Date().toISOString(),
   };
   
+  // Build counterparty metadata for conversation list display
+  // This is separate from message content - stored at conversation level
+  const counterpartyMetadata = {
+    counterpartyDisplayName: discordDisplayName,
+    platform: 'discord',
+  };
+  
   // Encrypt payload with target Relay edge's X25519 public key (zero-knowledge)
   const encryptedPayload = encryptPayload(messagePayload, edgeInfo.x25519PublicKey);
+  const encryptedMetadata = encryptPayload(counterpartyMetadata, edgeInfo.x25519PublicKey);
   
   // Forward to Relay API
   // Note: senderHash for matching, encryptedRecipientId for reply routing (only worker can decrypt)
@@ -172,6 +189,7 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
       senderHash,
       encryptedRecipientId: encryptedDiscordId,  // Encrypted for worker's key
       encryptedPayload,
+      encryptedMetadata,  // Encrypted counterparty info for conversation list
       receivedAt: new Date().toISOString(),
     });
     

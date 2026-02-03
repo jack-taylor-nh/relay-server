@@ -74,6 +74,7 @@ export async function forwardToApi(payload: {
   senderHash: string;
   encryptedRecipientId: string;  // Encrypted Discord ID for reply routing (only worker can decrypt)
   encryptedPayload: string;
+  encryptedMetadata?: string;     // Encrypted counterparty info for conversation list display
   receivedAt: string;
 }): Promise<void> {
   const timestamp = payload.receivedAt;

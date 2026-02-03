@@ -157,8 +157,11 @@ export const conversations = pgTable('conversations', {
   edgeId: text('edge_id').references(() => edges.id),
   /** Security level: e2ee, gateway_secured, or mixed (per-message varies) */
   securityLevel: text('security_level').notNull().$type<ConversationSecurityLevel>(),
-  /** User-friendly label for the channel (e.g., "Relayed via Email") */
-  channelLabel: text('channel_label'),
+  /** Encrypted counterparty metadata (NaCl box for edge's X25519 key)
+   * Contains: { counterpartyDisplayName: string, counterpartyPlatformId?: string }
+   * Only the client can decrypt this - server stores opaque blob
+   * For native conversations: counterparty.handle is resolved from participants */
+  encryptedMetadata: text('encrypted_metadata'),
   /** Double Ratchet state for E2EE conversations (JSONB) */
   ratchetState: jsonb('ratchet_state'),
   /** When conversation was created */
@@ -293,38 +296,14 @@ export const bridgeMessages = pgTable('bridge_messages', {
 }));
 
 // ============================================
-// DEPRECATED: Email Messages (keeping for migration compatibility)
-// TODO: Migrate data to bridge_messages and remove
+// REMOVED: Email Messages table (migrated to bridge_messages)
+// Dropped in migration 0011_add_encrypted_metadata_drop_deprecated.sql
 // ============================================
 
-export const emailMessages = pgTable('email_messages', {
-  /** References the message ID */
-  messageId: text('message_id').references(() => messages.id).primaryKey(),
-  /** Original sender email (hashed for privacy) */
-  fromAddressHash: text('from_address_hash').notNull(),
-  /** Subject line */
-  subject: text('subject'),
-  /** Message-ID header for threading */
-  emailMessageId: text('email_message_id'),
-  /** In-Reply-To header for threading */
-  inReplyTo: text('in_reply_to'),
-});
-
 // ============================================
-// DEPRECATED: Discord Messages (keeping for migration compatibility)
-// TODO: Migrate data to bridge_messages and remove
+// REMOVED: Discord Messages table (migrated to bridge_messages)
+// Dropped in migration 0011_add_encrypted_metadata_drop_deprecated.sql
 // ============================================
-
-export const discordMessages = pgTable('discord_messages', {
-  /** References the message ID */
-  messageId: text('message_id').references(() => messages.id).primaryKey(),
-  /** Sender's Discord user ID (for reply routing - stored encrypted for bridge) */
-  senderDiscordId: text('sender_discord_id').notNull(),
-  /** Sender's Discord tag (e.g., "User#1234") for display */
-  senderDiscordTag: text('sender_discord_tag'),
-  /** Discord message ID for reference */
-  discordMessageId: text('discord_message_id'),
-});
 
 // ============================================
 // Abuse Signals

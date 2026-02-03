@@ -69,6 +69,7 @@ discordRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
     senderHash: string;          // Hash of Discord user ID for conversation matching
     encryptedRecipientId: string; // Encrypted Discord user ID (only worker can decrypt for replies)
     encryptedPayload: string;    // Discord message encrypted for Relay user (zero-knowledge)
+    encryptedMetadata?: string;  // Encrypted counterparty info for conversation list display
     receivedAt: string;
   };
   
@@ -118,7 +119,7 @@ discordRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
       origin: 'discord',
       edgeId: body.edgeId,
       securityLevel: 'gateway_secured',
-      channelLabel: 'Discord Message',  // No display name - it's in encrypted payload
+      encryptedMetadata: body.encryptedMetadata || null,  // Encrypted counterparty info
       createdAt: now,
       lastActivityAt: now,
     });

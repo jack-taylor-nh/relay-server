@@ -319,6 +319,51 @@ function encryptEmailPayload(email: ParsedEmail, publicKeyBase64: string): strin
 }
 
 /**
+ * Encrypt counterparty metadata with recipient's edge X25519 public key
+ * Used for conversation list display (zero-knowledge)
+ */
+function encryptCounterpartyMetadata(email: ParsedEmail, publicKeyBase64: string): string {
+  try {
+    // Decode recipient's edge X25519 encryption public key
+    const recipientPublicKey = decodeBase64(publicKeyBase64);
+    
+    // Generate ephemeral keypair for encryption
+    const ephemeralKeyPair = nacl.box.keyPair();
+    
+    // Build counterparty metadata for conversation list display
+    const metadata = {
+      counterpartyDisplayName: email.fromName || email.from,
+      platform: 'email',
+    };
+    const metadataJson = JSON.stringify(metadata);
+    const messageBytes = new TextEncoder().encode(metadataJson);
+    
+    // Generate nonce
+    const nonce = nacl.randomBytes(nacl.box.nonceLength);
+    
+    // Encrypt with box (authenticated encryption)
+    const encrypted = nacl.box(
+      messageBytes,
+      nonce,
+      recipientPublicKey,
+      ephemeralKeyPair.secretKey
+    );
+    
+    // Package as: ephemeralPublicKey:nonce:ciphertext (all base64)
+    const pkg = {
+      ephemeralPubkey: encodeBase64(ephemeralKeyPair.publicKey),
+      nonce: encodeBase64(nonce),
+      ciphertext: encodeBase64(encrypted),
+    };
+    
+    return JSON.stringify(pkg);
+  } catch (error) {
+    console.error('Metadata encryption error:', error);
+    throw error;
+  }
+}
+
+/**
  * Forward email to API for storage
  * Phase 5: Encrypts to user's edge-specific X25519 key (not identity-derived)
  */
@@ -335,12 +380,16 @@ async function forwardToApi(
   // Phase 5: Use edge-specific key, not identity-derived key
   const encryptedPayload = encryptEmailPayload(email, edgeInfo.x25519PublicKey);
   
+  // Encrypt counterparty metadata for conversation list display
+  const encryptedMetadata = encryptCounterpartyMetadata(email, edgeInfo.x25519PublicKey);
+  
   const timestamp = new Date().toISOString();
   
   const payload = {
     edgeId: edgeInfo.id,
     senderHash,                     // Deterministic hash for matching
     encryptedPayload,               // Full email encrypted (server can't read)
+    encryptedMetadata,              // Counterparty info for conversation list (encrypted)
     receivedAt: timestamp,
   };
   

@@ -137,7 +137,7 @@ conversationRoutes.get('/', async (c) => {
         id: conv.id,
         origin: conv.origin,
         securityLevel: conv.securityLevel,
-        channelLabel: conv.channelLabel,
+        encryptedMetadata: conv.encryptedMetadata,  // Encrypted counterparty info (client decrypts)
         edge: edge ? {
           id: edge.id,
           type: edge.type,

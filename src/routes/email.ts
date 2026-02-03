@@ -102,6 +102,7 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
     identityId?: string;         // Optional: deprecated, we get it from edge
     senderHash: string;          // Hash for conversation matching
     encryptedPayload: string;    // Entire email encrypted (zero-knowledge)
+    encryptedMetadata?: string;  // Encrypted counterparty info for conversation list display
     receivedAt: string;
   };
   
@@ -156,7 +157,7 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
       origin: 'email',
       edgeId: body.edgeId,
       securityLevel: 'gateway_secured',
-      channelLabel: 'Relayed via Email',
+      encryptedMetadata: body.encryptedMetadata || null,  // Encrypted counterparty info
       createdAt: now,
       lastActivityAt: now,
     });

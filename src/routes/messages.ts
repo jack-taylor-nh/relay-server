@@ -199,7 +199,7 @@ messageRoutes.post('/', async (c) => {
           edgeId: body.edge_id,
           origin: 'native',
           securityLevel: 'e2ee',
-          channelLabel: `&${body.recipient_handle}`,
+          // Note: No channelLabel - counterparty handle is resolved from participants table
           lastActivityAt: now,
           createdAt: now,
         });
