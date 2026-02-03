@@ -19,19 +19,19 @@ export interface EdgeInfo {
 }
 
 /**
- * Look up edge by Relay handle (e.g., "@alice")
- * Used when Discord users message a Relay user by handle
+ * Look up edge by Relay handle for Discord
+ * Looks for type: 'discord' edges specifically
  */
 export async function lookupEdgeByHandle(handle: string): Promise<EdgeInfo | null> {
   try {
-    // Handle lookup uses the 'native' type with handle as address
+    // Look up Discord-specific edge by handle
     const response = await fetch(`${API_BASE_URL}/v1/edge/resolve`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        type: 'native',
+        type: 'discord',  // Discord edges only
         address: handle.toLowerCase(),
       }),
     });

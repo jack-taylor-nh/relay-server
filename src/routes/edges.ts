@@ -253,19 +253,24 @@ edgeRoutes.post('/', async (c) => {
   let metadata: any = {};
 
   switch (body.type) {
-    case 'native': {
-      // Handle (native edge)
+    case 'native':
+    case 'discord': {
+      // Handle-based edges (native and discord share format, separate namespaces)
       if (!body.customAddress) {
         return c.json({ code: 'VALIDATION_ERROR', message: 'Handle name required' }, 400);
       }
 
       const handleName = body.customAddress.toLowerCase();
       
-      // Check if handle already exists
+      // Check if handle already exists FOR THIS TYPE
+      // (same handle can exist across different types)
       const existingHandle = await db
         .select()
         .from(edges)
-        .where(eq(edges.address, handleName))
+        .where(and(
+          eq(edges.type, body.type),
+          eq(edges.address, handleName)
+        ))
         .limit(1);
 
       if (existingHandle.length > 0) {

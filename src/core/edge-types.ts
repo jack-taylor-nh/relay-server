@@ -56,14 +56,14 @@ export const EDGE_TYPES: EdgeTypeDefinition[] = [
   },
   {
     id: 'discord',
-    name: 'Discord',
-    description: 'Receive Discord DMs via Relay',
+    name: 'Discord Handle',
+    description: 'Receive Discord DMs via Relay bot',
     icon: '💬',
-    addressFormat: 'discord:{user_id}',
+    addressFormat: '&{handle}',
     securityLevel: 'gateway_secured',
     requiresCustomAddress: true,
-    addressPlaceholder: 'your_discord_user_id',
-    addressValidation: /^discord:\d{17,20}$/,  // Discord user IDs are 17-20 digit snowflakes
+    addressPlaceholder: 'your_handle',
+    addressValidation: /^[a-z0-9_-]{3,32}$/,  // Same format as native handles
     enabled: true,
   },
   // Future edge types can be added here without client changes!

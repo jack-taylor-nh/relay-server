@@ -120,7 +120,8 @@ export const edges = pgTable('edges', {
   lastActivityAt: timestamp('last_activity_at', { withTimezone: true }),
 }, (table) => ({
   ownerQueryKeyIdx: index('edges_owner_query_key_idx').on(table.ownerQueryKey),
-  addressIdx: uniqueIndex('edges_address_idx').on(table.address),
+  // Unique per (type, address) - allows same handle across different edge types
+  typeAddressIdx: uniqueIndex('edges_type_address_idx').on(table.type, table.address),
   typeIdx: index('edges_type_idx').on(table.type),
   bridgeTypeIdx: index('edges_bridge_type_idx').on(table.bridgeType),
   isNativeIdx: index('edges_is_native_idx').on(table.isNative),

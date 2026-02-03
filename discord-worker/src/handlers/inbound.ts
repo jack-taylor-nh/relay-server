@@ -135,8 +135,8 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
   
   console.log(`📥 /relay from ${discordUsername} → &${targetHandle}: "${messageContent.substring(0, 50)}..."`);
   
-  // Defer reply to give us time to process
-  await interaction.deferReply({ ephemeral: true });
+  // Defer reply - visible in chat to create conversation thread
+  await interaction.deferReply();
   
   // Look up target Relay edge by handle
   const edgeInfo = await lookupEdgeByHandle(targetHandle);
