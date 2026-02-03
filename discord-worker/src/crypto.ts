@@ -130,6 +130,38 @@ export async function hashDiscordId(discordId: string): Promise<string> {
 }
 
 /**
+ * Encrypt data for worker storage (worker can decrypt later for reply routing)
+ * Uses worker's own X25519 key - only the worker can decrypt this
+ * 
+ * Returns: base64(ephemeralPubkey):base64(nonce):base64(ciphertext)
+ */
+export function encryptForWorkerStorage(data: string): string {
+  const privateKeyHex = process.env.WORKER_ENCRYPTION_PRIVATE_KEY!;
+  const privateKeyBytes = hexToBytes(privateKeyHex);
+  const workerKeypair = nacl.box.keyPair.fromSecretKey(privateKeyBytes);
+  
+  // Generate ephemeral keypair for this encryption
+  const ephemeralKeyPair = nacl.box.keyPair();
+  
+  // Serialize data
+  const messageBytes = new TextEncoder().encode(data);
+  
+  // Generate nonce
+  const nonce = nacl.randomBytes(nacl.box.nonceLength);
+  
+  // Encrypt with box (to worker's public key, from ephemeral private key)
+  const encrypted = nacl.box(
+    messageBytes,
+    nonce,
+    workerKeypair.publicKey,
+    ephemeralKeyPair.secretKey
+  );
+  
+  // Return as colon-separated base64
+  return `${encodeBase64(ephemeralKeyPair.publicKey)}:${encodeBase64(nonce)}:${encodeBase64(encrypted)}`;
+}
+
+/**
  * Convert hex string to Uint8Array
  */
 function hexToBytes(hex: string): Uint8Array {

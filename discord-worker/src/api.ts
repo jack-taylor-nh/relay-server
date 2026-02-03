@@ -72,10 +72,9 @@ export async function lookupEdgeByHandle(handle: string): Promise<EdgeInfo | nul
 export async function forwardToApi(payload: {
   edgeId: string;
   senderHash: string;
-  senderDiscordId: string;  // Needed for reply routing
+  encryptedRecipientId: string;  // Encrypted Discord ID for reply routing (only worker can decrypt)
   encryptedPayload: string;
   receivedAt: string;
-  senderDisplayName?: string;
 }): Promise<void> {
   const timestamp = payload.receivedAt;
   

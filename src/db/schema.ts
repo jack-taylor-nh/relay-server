@@ -253,8 +253,9 @@ export type EmailBridgeMetadata = {
 };
 
 export type DiscordBridgeMetadata = {
-  discordUserId: string;    // Discord user ID for reply routing
-  discordTag?: string;      // e.g., "User#1234"
+  // Encrypted Discord user ID - only the discord worker can decrypt this for replies
+  // This ensures zero-knowledge: the server never sees the actual Discord user ID
+  encryptedDiscordId: string;
   discordMessageId?: string;
 };
 

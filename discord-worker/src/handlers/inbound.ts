@@ -16,20 +16,20 @@
 
 import { Message, ChatInputCommandInteraction } from 'discord.js';
 import { lookupEdgeByHandle, forwardToApi } from '../api.js';
-import { encryptPayload, hashDiscordId } from '../crypto.js';
+import { encryptPayload, hashDiscordId, encryptForWorkerStorage } from '../crypto.js';
 
-// Command format: /relay @handle message OR /relay handle message
-const RELAY_COMMAND_REGEX = /^\/relay\s+@?([a-zA-Z0-9_-]+)\s+(.+)$/s;
+// Command format: /relay &handle message OR /relay handle message
+const RELAY_COMMAND_REGEX = /^\/relay\s+[&@]?([a-zA-Z0-9_-]+)\s+(.+)$/s;
 
 // Help message
 const HELP_MESSAGE = `**Relay Bot** - Send messages to Relay users
 
 **Usage:**
-\`/relay @handle Your message here\`
+\`/relay &handle Your message here\`
 \`/relay handle Your message here\`
 
 **Example:**
-\`/relay @alice Hey, can we chat?\`
+\`/relay &alice Hey, can we chat?\`
 
 The Relay user will receive your message and can reply back to you here.
 
@@ -52,7 +52,7 @@ export async function handleInboundDM(message: Message): Promise<void> {
       await message.reply(HELP_MESSAGE);
     } else {
       await message.reply({
-        content: `👋 Hi! To message a Relay user, use:\n\`/relay @handle Your message\`\n\nType \`help\` for more info.`,
+        content: `👋 Hi! To message a Relay user, use:\n\`/relay &handle Your message\`\n\nType \`help\` for more info.`,
       });
     }
     return;
@@ -62,7 +62,7 @@ export async function handleInboundDM(message: Message): Promise<void> {
   const messageContent = match[2].trim();
   
   if (!messageContent) {
-    await message.reply('❌ Please include a message. Example: `/relay @handle Hello!`');
+    await message.reply('❌ Please include a message. Example: `/relay &handle Hello!`');
     return;
   }
   
@@ -72,18 +72,19 @@ export async function handleInboundDM(message: Message): Promise<void> {
   const edgeInfo = await lookupEdgeByHandle(targetHandle);
   
   if (!edgeInfo) {
-    await message.reply(`❌ Relay user \`@${targetHandle}\` not found. Check the handle and try again.`);
+    await message.reply(`❌ Relay user \`&${targetHandle}\` not found. Check the handle and try again.`);
     return;
   }
   
-  // Hash sender's Discord ID for conversation matching
+  // Hash sender's Discord ID for conversation matching (like email's fromAddressHash)
   const senderHash = await hashDiscordId(discordUserId);
   
-  // Build message payload (will be encrypted)
+  // Encrypt Discord user ID for reply routing (only worker can decrypt)
+  const encryptedDiscordId = encryptForWorkerStorage(discordUserId);
+  
+  // Build message payload (will be encrypted for the Relay user)
   const messagePayload = {
     content: messageContent,
-    senderDiscordId: discordUserId,
-    senderDiscordTag: discordUsername,
     senderDisplayName: message.author.displayName,
     messageId: message.id,
     timestamp: message.createdAt.toISOString(),
@@ -93,20 +94,20 @@ export async function handleInboundDM(message: Message): Promise<void> {
   const encryptedPayload = encryptPayload(messagePayload, edgeInfo.x25519PublicKey);
   
   // Forward to Relay API
+  // Note: senderHash for matching, encryptedDiscordId for reply routing (only worker can decrypt)
   try {
     await forwardToApi({
       edgeId: edgeInfo.id,
       senderHash,
-      senderDiscordId: discordUserId,  // Store for reply routing
+      encryptedRecipientId: encryptedDiscordId,  // Encrypted for worker's key
       encryptedPayload,
       receivedAt: new Date().toISOString(),
-      senderDisplayName: discordUsername,
     });
     
     // Confirm receipt
     await message.react('✅');
     await message.reply({
-      content: `📨 Message sent to \`@${targetHandle}\`! They'll see it in Relay and can reply here.`,
+      content: `📨 Message sent to \`&${targetHandle}\`! They'll see it in Relay and can reply here.`,
     });
     
     console.log(`✅ Message forwarded to Relay edge ${edgeInfo.id}`);
@@ -129,10 +130,10 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
   const handleInput = interaction.options.getString('handle', true);
   const messageContent = interaction.options.getString('message', true);
   
-  // Clean the handle (remove @ if present)
-  const targetHandle = handleInput.replace(/^@/, '').toLowerCase();
+  // Clean the handle (remove & or @ if present)
+  const targetHandle = handleInput.replace(/^[&@]/, '').toLowerCase();
   
-  console.log(`📥 /relay from ${discordUsername} → @${targetHandle}: "${messageContent.substring(0, 50)}..."`);
+  console.log(`📥 /relay from ${discordUsername} → &${targetHandle}: "${messageContent.substring(0, 50)}..."`);
   
   // Defer reply to give us time to process
   await interaction.deferReply({ ephemeral: true });
@@ -141,18 +142,20 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
   const edgeInfo = await lookupEdgeByHandle(targetHandle);
   
   if (!edgeInfo) {
-    await interaction.editReply(`❌ Relay user \`@${targetHandle}\` not found. Check the handle and try again.`);
+    await interaction.editReply(`❌ Relay user \`&${targetHandle}\` not found. Check the handle and try again.`);
     return;
   }
   
-  // Hash sender's Discord ID for conversation matching
+  // Hash sender's Discord ID for conversation matching (like email's fromAddressHash)
   const senderHash = await hashDiscordId(discordUserId);
   
-  // Build message payload (will be encrypted)
+  // Encrypt Discord user ID for reply routing (only worker can decrypt)
+  const encryptedDiscordId = encryptForWorkerStorage(discordUserId);
+  
+  // Build message payload (will be encrypted for the Relay user)
+  // Note: The actual Discord ID is NOT in here - it's encrypted separately
   const messagePayload = {
     content: messageContent,
-    senderDiscordId: discordUserId,
-    senderDiscordTag: discordUsername,
     senderDisplayName: discordDisplayName,
     messageId: interaction.id,
     timestamp: new Date().toISOString(),
@@ -162,18 +165,18 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
   const encryptedPayload = encryptPayload(messagePayload, edgeInfo.x25519PublicKey);
   
   // Forward to Relay API
+  // Note: senderHash for matching, encryptedRecipientId for reply routing (only worker can decrypt)
   try {
     await forwardToApi({
       edgeId: edgeInfo.id,
       senderHash,
-      senderDiscordId: discordUserId,  // Store for reply routing
+      encryptedRecipientId: encryptedDiscordId,  // Encrypted for worker's key
       encryptedPayload,
       receivedAt: new Date().toISOString(),
-      senderDisplayName: discordUsername,
     });
     
     // Confirm receipt
-    await interaction.editReply(`📨 Message sent to \`@${targetHandle}\`! They'll see it in Relay and can reply here.`);
+    await interaction.editReply(`📨 Message sent to \`&${targetHandle}\`! They'll see it in Relay and can reply here.`);
     
     console.log(`✅ Message forwarded to Relay edge ${edgeInfo.id}`);
   } catch (error) {

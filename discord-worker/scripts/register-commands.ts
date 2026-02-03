@@ -28,7 +28,7 @@ const commands = [
     .addStringOption(option =>
       option
         .setName('handle')
-        .setDescription('The Relay handle to message (e.g., @alice or alice)')
+        .setDescription('The Relay handle to message (e.g., &alice or alice)')
         .setRequired(true)
     )
     .addStringOption(option =>

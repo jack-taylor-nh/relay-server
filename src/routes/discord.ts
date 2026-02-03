@@ -57,22 +57,24 @@ function hexToBytes(hex: string): Uint8Array {
 /**
  * Process inbound Discord DM from worker
  * 
- * Discord user sends: /relay @handle message
+ * Discord user sends: /relay &handle message
  * Worker encrypts and forwards here
+ * 
+ * PRIVACY: We store only hashed identifiers for matching.
+ * The actual Discord user ID is encrypted and only the worker can decrypt it.
  */
 discordRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
   type InboundBody = {
     edgeId: string;              // Target Relay edge (the handle being messaged)
     senderHash: string;          // Hash of Discord user ID for conversation matching
-    senderDiscordId: string;     // Actual Discord user ID for reply routing
-    encryptedPayload: string;    // Discord message encrypted (zero-knowledge)
+    encryptedRecipientId: string; // Encrypted Discord user ID (only worker can decrypt for replies)
+    encryptedPayload: string;    // Discord message encrypted for Relay user (zero-knowledge)
     receivedAt: string;
-    senderDisplayName?: string;  // Discord username for display
   };
   
   const body = await c.req.json<InboundBody>();
 
-  if (!body.edgeId || !body.senderHash || !body.encryptedPayload || !body.senderDiscordId) {
+  if (!body.edgeId || !body.senderHash || !body.encryptedPayload || !body.encryptedRecipientId) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
   }
 
@@ -116,7 +118,7 @@ discordRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
       origin: 'discord',
       edgeId: body.edgeId,
       securityLevel: 'gateway_secured',
-      channelLabel: `Discord: ${body.senderDisplayName || 'Unknown'}`,
+      channelLabel: 'Discord Message',  // No display name - it's in encrypted payload
       createdAt: now,
       lastActivityAt: now,
     });
@@ -128,11 +130,11 @@ discordRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
       isOwner: true,
     });
 
-    // Add sender as external participant
+    // Add sender as external participant (hash only, no display name stored)
     await db.insert(conversationParticipants).values({
       conversationId,
       externalId: body.senderHash,
-      displayName: body.senderDisplayName || null,
+      displayName: null,  // Display name is in encrypted payload
     });
   }
 
@@ -155,15 +157,16 @@ discordRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
   });
 
   // Store bridge-specific metadata for reply routing (unified table)
+  // PRIVACY: Only store hash for matching, encrypted ID for reply routing
   await db.insert(bridgeMessages).values({
     messageId,
     bridgeType: 'discord',
-    senderExternalId: body.senderHash,
-    senderDisplayName: body.senderDisplayName || null,
+    senderExternalId: body.senderHash,  // Hash for conversation matching
+    senderDisplayName: null,            // Display name is in encrypted payload
     platformMessageId: null,
     metadata: {
-      discordUserId: body.senderDiscordId,
-      discordTag: body.senderDisplayName,
+      // Store encrypted Discord ID - only worker can decrypt for replies
+      encryptedDiscordId: body.encryptedRecipientId,
     } as DiscordBridgeMetadata,
   });
 
@@ -264,8 +267,8 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
     return c.json({ code: 'EDGE_DISABLED', message: 'Edge is disabled' }, 410);
   }
 
-  // Look up the Discord user ID from the conversation's bridge messages
-  // Get the most recent inbound message to find the sender's Discord ID
+  // Look up the encrypted Discord ID from the conversation's bridge messages
+  // The actual Discord ID is encrypted - only the worker can decrypt it
   const [bridgeMsg] = await db
     .select({ metadata: bridgeMessages.metadata })
     .from(bridgeMessages)
@@ -281,12 +284,12 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
   }
 
   const discordMetadata = bridgeMsg.metadata as DiscordBridgeMetadata;
-  if (!discordMetadata.discordUserId) {
-    return c.json({ code: 'NO_RECIPIENT', message: 'Could not find Discord user ID' }, 400);
+  if (!discordMetadata.encryptedDiscordId) {
+    return c.json({ code: 'NO_RECIPIENT', message: 'Could not find encrypted Discord ID' }, 400);
   }
 
-  // Forward to Discord worker with the Discord user ID
-  // The worker will send the DM directly
+  // Forward to Discord worker with the ENCRYPTED Discord ID
+  // Worker will decrypt it using its private key to get the actual Discord user ID
   try {
     const response = await fetch(`${DISCORD_WORKER_URL}/send`, {
       method: 'POST',
@@ -297,7 +300,7 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
       body: JSON.stringify({
         conversationId: body.conversationId,
         content: body.content,
-        recipientDiscordId: discordMetadata.discordUserId,  // Send directly (trusted worker)
+        encryptedRecipientId: discordMetadata.encryptedDiscordId,  // Worker decrypts this
         edgeAddress: edge.address,
       }),
     });

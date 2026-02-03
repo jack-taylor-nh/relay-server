@@ -4,14 +4,16 @@
  * Sends Discord DMs on behalf of Relay users
  * 
  * Flow:
- * 1. Relay API calls /send endpoint with recipient Discord ID
- * 2. Bot sends DM to Discord user
+ * 1. Relay API calls /send endpoint with ENCRYPTED recipient Discord ID
+ * 2. Bot decrypts the ID using its private key
+ * 3. Bot sends DM to Discord user
  * 
- * Note: The Discord ID comes from the trusted relay-server, not the client.
- * The server looks up the ID from the conversation's message history.
+ * Note: The encrypted Discord ID comes from the server, which stored it
+ * when the inbound message arrived. Only the worker can decrypt it.
  */
 
 import { Client, User } from 'discord.js';
+import { decryptForWorker } from '../crypto.js';
 
 // Footer appended to all outbound messages
 const RELAY_FOOTER = '\n\n—\n_Sent via Relay – userelay.org_';
@@ -19,8 +21,8 @@ const RELAY_FOOTER = '\n\n—\n_Sent via Relay – userelay.org_';
 export interface SendMessageRequest {
   conversationId: string;
   content: string;
-  recipientDiscordId: string;  // Discord user ID (from trusted server)
-  edgeAddress: string;         // Sender's edge address (handle)
+  encryptedRecipientId: string;  // Encrypted Discord user ID (worker decrypts)
+  edgeAddress: string;           // Sender's edge address (handle)
 }
 
 export interface SendMessageResponse {
@@ -37,7 +39,17 @@ export async function handleOutboundDM(
   request: SendMessageRequest
 ): Promise<SendMessageResponse> {
   try {
-    const recipientDiscordId = request.recipientDiscordId;
+    // Decrypt the Discord user ID (only worker can do this)
+    let recipientDiscordId: string;
+    try {
+      recipientDiscordId = decryptForWorker(request.encryptedRecipientId);
+    } catch (error) {
+      console.error('Failed to decrypt recipient Discord ID:', error);
+      return {
+        success: false,
+        error: 'Failed to decrypt recipient ID',
+      };
+    }
     
     console.log(`📤 Sending DM to Discord user ${recipientDiscordId}`);
     
@@ -55,7 +67,7 @@ export async function handleOutboundDM(
     
     // Format the message with sender context
     // Include which Relay handle is responding
-    const formattedContent = `**@${request.edgeAddress}** replied:\n\n${request.content}${RELAY_FOOTER}`;
+    const formattedContent = `**&${request.edgeAddress}** replied:\n\n${request.content}${RELAY_FOOTER}`;
     
     // Send DM
     try {
