@@ -33,14 +33,12 @@ export interface SendMessageResponse {
 }
 
 /**
- * Format a timestamp for display
+ * Format a timestamp for display using Discord's native format
+ * This renders in the user's local timezone automatically
  */
 function formatTimestamp(): string {
-  return new Date().toLocaleTimeString('en-US', { 
-    hour: 'numeric', 
-    minute: '2-digit',
-    hour12: true 
-  });
+  const unixTimestamp = Math.floor(Date.now() / 1000);
+  return `<t:${unixTimestamp}:t>`; // :t = short time format
 }
 
 /**

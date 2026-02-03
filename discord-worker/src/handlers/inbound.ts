@@ -103,11 +103,9 @@ export async function handleInboundDM(message: Message): Promise<void> {
   const encryptedPayload = encryptPayload(messagePayload, edgeInfo.x25519PublicKey);
   const encryptedMetadata = encryptPayload(counterpartyMetadata, edgeInfo.x25519PublicKey);
   
-  const timestamp = new Date().toLocaleTimeString('en-US', { 
-    hour: 'numeric', 
-    minute: '2-digit',
-    hour12: true 
-  });
+  // Use Discord's timestamp format - renders in user's local timezone
+  const unixTimestamp = Math.floor(Date.now() / 1000);
+  const timestamp = `<t:${unixTimestamp}:t>`; // :t = short time format
   
   // Forward to Relay API
   try {
@@ -256,11 +254,9 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
   const encryptedPayload = encryptPayload(messagePayload, edgeInfo.x25519PublicKey);
   const encryptedMetadata = encryptPayload(counterpartyMetadata, edgeInfo.x25519PublicKey);
   
-  const timestamp = new Date().toLocaleTimeString('en-US', { 
-    hour: 'numeric', 
-    minute: '2-digit',
-    hour12: true 
-  });
+  // Use Discord's timestamp format - renders in user's local timezone
+  const unixTimestamp = Math.floor(Date.now() / 1000);
+  const timestamp = `<t:${unixTimestamp}:t>`; // :t = short time format
   
   try {
     // Forward to Relay API
