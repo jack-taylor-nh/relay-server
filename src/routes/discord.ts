@@ -270,9 +270,8 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
     return c.json({ code: 'EDGE_DISABLED', message: 'Edge is disabled' }, 410);
   }
 
-  // Look up the encrypted Discord ID and most recent message ID from the conversation's bridge messages
+  // Look up the encrypted Discord ID from the most recent bridge message
   // The actual Discord ID is encrypted - only the worker can decrypt it
-  // We get the MOST RECENT message to reply to for threading
   const [bridgeMsg] = await db
     .select({ 
       messageId: bridgeMessages.messageId,
@@ -285,7 +284,7 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
       eq(messages.conversationId, body.conversationId),
       eq(bridgeMessages.bridgeType, 'discord')
     ))
-    .orderBy(sql`${messages.createdAt} DESC`)  // Get most recent for reply threading
+    .orderBy(sql`${messages.createdAt} DESC`)  // Get most recent for the encrypted Discord ID
     .limit(1);
 
   if (!bridgeMsg || !bridgeMsg.metadata) {
@@ -297,8 +296,30 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
     return c.json({ code: 'NO_RECIPIENT', message: 'Could not find encrypted Discord ID' }, 400);
   }
 
-  // Get the conversation message ID (the bot's message we'll edit to append replies)
-  const conversationMessageId = discordMetadata.conversationMessageId;
+  // Look for the conversationMessageId in ANY bridge message for this conversation
+  // (It may be stored on an older message, not the most recent one)
+  let conversationMessageId = discordMetadata.conversationMessageId;
+  
+  if (!conversationMessageId) {
+    // Search all bridge messages for one with the conversationMessageId
+    const [msgWithConvId] = await db
+      .select({ 
+        metadata: bridgeMessages.metadata,
+      })
+      .from(bridgeMessages)
+      .innerJoin(messages, eq(messages.id, bridgeMessages.messageId))
+      .where(and(
+        eq(messages.conversationId, body.conversationId),
+        eq(bridgeMessages.bridgeType, 'discord'),
+        sql`${bridgeMessages.metadata}->>'conversationMessageId' IS NOT NULL`
+      ))
+      .limit(1);
+    
+    if (msgWithConvId) {
+      const metadata = msgWithConvId.metadata as DiscordBridgeMetadata;
+      conversationMessageId = metadata.conversationMessageId;
+    }
+  }
 
   // Forward to Discord worker with the ENCRYPTED Discord ID
   // Worker will decrypt it using its private key to get the actual Discord user ID
