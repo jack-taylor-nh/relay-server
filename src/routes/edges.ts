@@ -273,11 +273,8 @@ edgeRoutes.post('/', async (c) => {
       }
 
       address = handleName;
-      // Store encrypted metadata (opaque to server)
-      metadata = {
-        handle: handleName,
-        encrypted: body.encryptedMetadata || null,
-      };
+      // Store ONLY encrypted metadata - no plaintext handle (address field has it)
+      metadata = body.encryptedMetadata ? { encrypted: body.encryptedMetadata } : {};
 
       break;
     }
