@@ -141,6 +141,47 @@ export async function updateConversationMessageId(
 }
 
 /**
+ * Look up existing conversation for a Discord user + Relay edge
+ * Returns conversation info including the conversation message ID if it exists
+ */
+export async function lookupExistingConversation(
+  senderHash: string,
+  edgeId: string
+): Promise<{
+  conversationId: string;
+  conversationMessageId?: string;
+} | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/v1/discord/lookup-conversation`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Worker ${API_SECRET}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        senderHash,
+        edgeId,
+      }),
+    });
+    
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null; // No existing conversation
+      }
+      throw new Error(`API error: ${response.status}`);
+    }
+    
+    return await response.json() as {
+      conversationId: string;
+      conversationMessageId?: string;
+    };
+  } catch (error) {
+    console.error('Conversation lookup error:', error);
+    return null;
+  }
+}
+
+/**
  * Look up Discord bridge edge public key
  */
 export async function getDiscordBridgeInfo(): Promise<EdgeInfo | null> {

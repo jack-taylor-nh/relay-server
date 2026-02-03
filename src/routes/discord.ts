@@ -432,6 +432,61 @@ discordRoutes.post('/conversation-message', workerAuthMiddleware, async (c) => {
 });
 
 /**
+ * Look up existing conversation for a Discord user + Relay edge
+ * Used by worker to check if a conversation message already exists
+ */
+discordRoutes.post('/lookup-conversation', workerAuthMiddleware, async (c) => {
+  const body = await c.req.json<{
+    senderHash: string;
+    edgeId: string;
+  }>();
+
+  if (!body.senderHash || !body.edgeId) {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
+  }
+
+  // Find conversation by edge + external participant hash
+  const existingConv = await db
+    .select({ 
+      conversationId: conversationParticipants.conversationId,
+    })
+    .from(conversationParticipants)
+    .innerJoin(conversations, eq(conversations.id, conversationParticipants.conversationId))
+    .where(and(
+      eq(conversations.edgeId, body.edgeId),
+      eq(conversationParticipants.externalId, body.senderHash)
+    ))
+    .limit(1);
+
+  if (existingConv.length === 0) {
+    return c.json({ code: 'NOT_FOUND', message: 'No existing conversation' }, 404);
+  }
+
+  const conversationId = existingConv[0].conversationId;
+
+  // Get the conversation message ID from bridge messages metadata
+  const [bridgeMsg] = await db
+    .select({ 
+      metadata: bridgeMessages.metadata,
+    })
+    .from(bridgeMessages)
+    .innerJoin(messages, eq(messages.id, bridgeMessages.messageId))
+    .where(and(
+      eq(messages.conversationId, conversationId),
+      eq(bridgeMessages.bridgeType, 'discord')
+    ))
+    .orderBy(sql`${messages.createdAt} DESC`)
+    .limit(1);
+
+  const discordMetadata = bridgeMsg?.metadata as DiscordBridgeMetadata | undefined;
+
+  return c.json({
+    conversationId,
+    conversationMessageId: discordMetadata?.conversationMessageId,
+  });
+});
+
+/**
  * Get Discord bridge public key
  * Used by clients to encrypt recipient IDs
  */
