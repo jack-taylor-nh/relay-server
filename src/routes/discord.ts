@@ -486,7 +486,8 @@ discordRoutes.post('/lookup-conversation', workerAuthMiddleware, async (c) => {
   const conversationId = existingConv[0].conversationId;
 
   // Get the conversation message ID from bridge messages metadata
-  const [bridgeMsg] = await db
+  // Search ALL bridge messages for one with the conversationMessageId (not just most recent)
+  const [bridgeMsgWithConvId] = await db
     .select({ 
       metadata: bridgeMessages.metadata,
     })
@@ -494,12 +495,12 @@ discordRoutes.post('/lookup-conversation', workerAuthMiddleware, async (c) => {
     .innerJoin(messages, eq(messages.id, bridgeMessages.messageId))
     .where(and(
       eq(messages.conversationId, conversationId),
-      eq(bridgeMessages.bridgeType, 'discord')
+      eq(bridgeMessages.bridgeType, 'discord'),
+      sql`${bridgeMessages.metadata}->>'conversationMessageId' IS NOT NULL`
     ))
-    .orderBy(sql`${messages.createdAt} DESC`)
     .limit(1);
 
-  const discordMetadata = bridgeMsg?.metadata as DiscordBridgeMetadata | undefined;
+  const discordMetadata = bridgeMsgWithConvId?.metadata as DiscordBridgeMetadata | undefined;
 
   return c.json({
     conversationId,
