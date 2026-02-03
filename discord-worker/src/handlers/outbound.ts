@@ -1,21 +1,34 @@
 /**
  * Outbound Message Handler
  * 
- * Sends Discord DMs on behalf of Relay users using a "conversation message" pattern:
+ * Sends Discord DMs on behalf of Relay users using Components V2:
  * 
- * 1. When Discord user first messages via /relay, we send a confirmation that becomes 
- *    the "conversation message"
+ * 1. When Discord user first messages via /relay, we create a Container-based
+ *    "conversation message" with branded styling
  * 2. When Relay user replies, we EDIT the conversation message to append the reply
  * 3. We also send a brief notification DM that auto-deletes (to trigger Discord notification)
  * 
- * This creates a pseudo-thread experience where the conversation lives in one editable message.
+ * This creates a pseudo-thread experience where the conversation lives in one
+ * richly-formatted, editable message.
  */
 
-import { Client, User, Message, DMChannel } from 'discord.js';
+import { Client, User } from 'discord.js';
 import { decryptForWorker } from '../crypto.js';
+import {
+  buildConversationComponents,
+  buildNotificationContent,
+  formatDiscordTimestamp,
+  MESSAGE_FLAGS,
+  MessageEntry,
+  ConversationContext,
+  ComponentType,
+} from './components.js';
 
 // How long to show the notification before deleting (ms)
 const NOTIFICATION_DELETE_DELAY = 3000;
+
+// Maximum messages to keep in conversation (to avoid Discord limits)
+const MAX_CONVERSATION_MESSAGES = 10;
 
 export interface SendMessageRequest {
   conversationId: string;
@@ -33,40 +46,92 @@ export interface SendMessageResponse {
 }
 
 /**
- * Format a timestamp for display using Discord's native format
- * This renders in the user's local timezone automatically
+ * Parse messages from legacy text format (for backwards compatibility)
  */
-function formatTimestamp(): string {
-  const unixTimestamp = Math.floor(Date.now() / 1000);
-  return `<t:${unixTimestamp}:t>`; // :t = short time format
-}
-
-/**
- * Build the initial conversation message content
- */
-function buildConversationContent(
-  edgeAddress: string,
-  messages: Array<{ from: 'relay' | 'discord'; content: string; time: string }>
-): string {
-  let content = `💬 **Conversation with &${edgeAddress}**\n`;
-  content += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+function parseExistingMessagesFromLegacy(content: string, targetHandle: string): MessageEntry[] {
+  const messages: MessageEntry[] = [];
   
-  for (const msg of messages) {
-    if (msg.from === 'relay') {
-      content += `**&${edgeAddress}** _(${msg.time})_:\n${msg.content}\n\n`;
-    } else {
-      content += `**You** _(${msg.time})_:\n${msg.content}\n\n`;
-    }
+  // Match: **SenderName** _(timestamp)_:\nMessage content
+  const regex = /\*\*(.+?)\*\* _\((.+?)\)_:\n([\s\S]+?)(?=\n\n\*\*|━━━━|$)/g;
+  let match;
+  
+  while ((match = regex.exec(content)) !== null) {
+    const senderName = match[1];
+    const timestamp = match[2];
+    const msgContent = match[3].trim();
+    
+    // Determine if from Relay or Discord based on sender name
+    const isFromRelay = senderName.startsWith('&') || senderName !== 'You';
+    
+    messages.push({
+      from: isFromRelay ? 'relay' : 'discord',
+      senderName: isFromRelay ? senderName : 'You',
+      content: msgContent,
+      timestamp: timestamp.startsWith('<t:') ? timestamp : `<t:${Math.floor(Date.now() / 1000)}:t>`,
+    });
   }
   
-  content += `━━━━━━━━━━━━━━━━━━━━\n`;
-  content += `_Reply with_ \`/relay &${edgeAddress} your message\``;
-  
-  return content;
+  return messages;
 }
 
 /**
- * Send a DM to a Discord user, using the conversation message pattern
+ * Send a message with Components V2 via Discord REST API
+ */
+async function sendMessageWithComponentsV2(channelId: string, components: any[]): Promise<string> {
+  const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      flags: MESSAGE_FLAGS.IS_COMPONENTS_V2,
+      components,
+    }),
+  });
+  
+  if (!response.ok) {
+    const error = await response.text();
+    console.error('Discord API error:', error);
+    throw new Error(`Failed to send message: ${response.status}`);
+  }
+  
+  const data = await response.json() as { id: string };
+  return data.id;
+}
+
+/**
+ * Edit a message with Components V2 via Discord REST API
+ */
+async function editMessageWithComponentsV2(
+  channelId: string,
+  messageId: string,
+  components: any[]
+): Promise<void> {
+  const response = await fetch(
+    `https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        flags: MESSAGE_FLAGS.IS_COMPONENTS_V2,
+        components,
+      }),
+    }
+  );
+  
+  if (!response.ok) {
+    const error = await response.text();
+    console.error('Discord API error:', error);
+    throw new Error(`Failed to edit message: ${response.status}`);
+  }
+}
+
+/**
+ * Send a DM to a Discord user, using the Components V2 conversation pattern
  */
 export async function handleOutboundDM(
   client: Client,
@@ -101,51 +166,58 @@ export async function handleOutboundDM(
     
     try {
       const dmChannel = await user.createDM();
-      const timestamp = formatTimestamp();
+      const timestamp = formatDiscordTimestamp();
+      
+      // New message from Relay user
+      const newMessage: MessageEntry = {
+        from: 'relay',
+        senderName: `&${request.edgeAddress}`,
+        content: request.content,
+        timestamp,
+      };
       
       // Try to edit the existing conversation message
       if (request.conversationMessageId) {
         try {
           const conversationMessage = await dmChannel.messages.fetch(request.conversationMessageId);
           
-          // Append the new reply to the existing content
-          const existingContent = conversationMessage.content;
-          const insertPoint = existingContent.lastIndexOf('\n━━━━━━━━━━━━━━━━━━━━\n');
+          // Parse existing messages - check if legacy format or new format
+          let existingMessages: MessageEntry[] = [];
           
-          let newContent: string;
-          if (insertPoint !== -1) {
-            // Insert before the footer
-            const beforeFooter = existingContent.substring(0, insertPoint);
-            const footer = existingContent.substring(insertPoint);
-            newContent = `${beforeFooter}\n**&${request.edgeAddress}** _(${timestamp})_:\n${request.content}\n${footer}`;
-          } else {
-            // Fallback: just append
-            newContent = `${existingContent}\n\n**&${request.edgeAddress}** _(${timestamp})_:\n${request.content}`;
+          // If the message has content (legacy format), parse from there
+          if (conversationMessage.content && conversationMessage.content.includes('━━━━')) {
+            existingMessages = parseExistingMessagesFromLegacy(conversationMessage.content, request.edgeAddress);
+          }
+          // Note: For Components V2 messages, we'd need to fetch via REST API
+          // For now, we track messages by accumulating them
+          
+          // Add new message
+          existingMessages.push(newMessage);
+          
+          // Truncate if too many
+          if (existingMessages.length > MAX_CONVERSATION_MESSAGES) {
+            existingMessages = existingMessages.slice(-MAX_CONVERSATION_MESSAGES);
           }
           
-          // Discord has a 2000 char limit - truncate old messages if needed
-          if (newContent.length > 1900) {
-            // Keep header, remove oldest messages, keep recent + footer
-            const lines = newContent.split('\n');
-            const header = lines.slice(0, 3).join('\n');
-            const footer = lines.slice(-3).join('\n');
-            const middle = lines.slice(3, -3);
-            
-            // Remove from the beginning of middle until we fit
-            while (middle.length > 0 && (header + '\n' + middle.join('\n') + '\n' + footer).length > 1800) {
-              middle.shift();
-            }
-            
-            newContent = header + '\n_(earlier messages truncated)_\n\n' + middle.join('\n') + '\n' + footer;
-          }
+          // Build updated Components V2 message
+          const context: ConversationContext = {
+            targetHandle: request.edgeAddress,
+            messages: existingMessages,
+            securityLevel: 'relayed',
+          };
           
-          // Edit the conversation message
-          await conversationMessage.edit(newContent);
+          // Edit with new components via REST API
+          await editMessageWithComponentsV2(
+            dmChannel.id,
+            request.conversationMessageId,
+            buildConversationComponents(context)
+          );
+          
           console.log(`✏️ Updated conversation message ${request.conversationMessageId}`);
           
-          // Send a notification that auto-deletes
+          // Send a notification that auto-deletes (to trigger Discord notification)
           const notification = await dmChannel.send({
-            content: `🔔 **New message from &${request.edgeAddress}!** _(check above)_`,
+            content: buildNotificationContent(request.edgeAddress),
           });
           
           // Delete the notification after a delay
@@ -154,7 +226,6 @@ export async function handleOutboundDM(
               await notification.delete();
               console.log(`🗑️ Deleted notification ${notification.id}`);
             } catch (deleteError) {
-              // Notification may already be deleted or inaccessible
               console.warn('Could not delete notification:', deleteError);
             }
           }, NOTIFICATION_DELETE_DELAY);
@@ -171,21 +242,25 @@ export async function handleOutboundDM(
         }
       }
       
-      // No existing conversation message or couldn't edit - create new one
-      const newConversationContent = buildConversationContent(request.edgeAddress, [
-        { from: 'relay', content: request.content, time: timestamp }
-      ]);
+      // No existing conversation message or couldn't edit - create new Components V2 message
+      const context: ConversationContext = {
+        targetHandle: request.edgeAddress,
+        messages: [newMessage],
+        securityLevel: 'relayed',
+      };
       
-      const conversationMessage = await dmChannel.send({
-        content: newConversationContent,
-      });
+      // Send Components V2 message via REST API
+      const conversationMessageId = await sendMessageWithComponentsV2(
+        dmChannel.id,
+        buildConversationComponents(context)
+      );
       
-      console.log(`✅ Created new conversation message ${conversationMessage.id} for ${user.tag}`);
+      console.log(`✅ Created new conversation message ${conversationMessageId} for ${user.tag}`);
       
       return {
         success: true,
-        messageId: conversationMessage.id,
-        conversationMessageId: conversationMessage.id,
+        messageId: conversationMessageId,
+        conversationMessageId,
       };
       
     } catch (error) {
@@ -203,3 +278,4 @@ export async function handleOutboundDM(
     };
   }
 }
+

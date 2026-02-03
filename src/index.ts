@@ -15,6 +15,7 @@ import { conversationRoutes } from './routes/conversations.js';
 import { messageRoutes } from './routes/messages.js';
 import { emailRoutes } from './routes/email.js';
 import { discordRoutes } from './routes/discord.js';
+import { assetsRoutes } from './routes/assets.js';
 
 const app = new Hono();
 
@@ -44,6 +45,9 @@ app.get('/', (c) => c.json({
 }));
 
 app.get('/health', (c) => c.json({ status: 'ok' }));
+
+// Static assets (with CDN caching)
+app.route('/assets', assetsRoutes);
 
 // API routes
 const api = new Hono();

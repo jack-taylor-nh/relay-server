@@ -21,11 +21,12 @@
  */
 
 import 'dotenv/config';
-import { Client, GatewayIntentBits, Events, Partials, Message, ChatInputCommandInteraction } from 'discord.js';
+import { Client, GatewayIntentBits, Events, Partials, Message, ChatInputCommandInteraction, ButtonInteraction, ModalSubmitInteraction } from 'discord.js';
 import { createServer } from 'http';
-import { handleInboundDM, handleSlashCommand } from './handlers/inbound.js';
+import { handleInboundDM, handleSlashCommand, handleReplyButton, handleNewConversationButton, handleReplyModalSubmit, handleNewConversationModalSubmit } from './handlers/inbound.js';
 import { createHttpServer } from './http/server.js';
 import { getWorkerPublicKey } from './crypto.js';
+import { CUSTOM_IDS } from './handlers/components.js';
 
 // Environment validation
 const requiredEnvVars = [
@@ -83,24 +84,76 @@ client.on(Events.MessageCreate, async (message: Message) => {
 
 // Handle slash command interactions
 client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-  
-  if (interaction.commandName === 'relay') {
-    console.log(`📥 Received /relay command from ${interaction.user.tag} (${interaction.user.id})`);
-    
-    try {
-      await handleSlashCommand(interaction as ChatInputCommandInteraction);
-    } catch (error) {
-      console.error('Error handling slash command:', error);
+  // Handle slash commands
+  if (interaction.isChatInputCommand()) {
+    if (interaction.commandName === 'relay') {
+      console.log(`📥 Received /relay command from ${interaction.user.tag} (${interaction.user.id})`);
       
-      // Reply with generic error (safe to show since slash commands are explicit)
+      try {
+        await handleSlashCommand(interaction as ChatInputCommandInteraction);
+      } catch (error) {
+        console.error('Error handling slash command:', error);
+        
+        // Reply with generic error (safe to show since slash commands are explicit)
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ 
+            content: '❌ Sorry, something went wrong. Please try again later.',
+            ephemeral: true 
+          });
+        }
+      }
+    }
+    return;
+  }
+  
+  // Handle button interactions
+  if (interaction.isButton()) {
+    try {
+      // Check button type by prefix
+      if (interaction.customId.startsWith('relay_reply:')) {
+        // Reply button - includes handle in custom_id (relay_reply:handle)
+        await handleReplyButton(interaction as ButtonInteraction);
+      } else if (interaction.customId === CUSTOM_IDS.NEW_CONVERSATION_BUTTON) {
+        // New conversation button
+        await handleNewConversationButton(interaction as ButtonInteraction);
+      } else {
+        console.log(`Unknown button interaction: ${interaction.customId}`);
+      }
+    } catch (error) {
+      console.error('Error handling button interaction:', error);
       if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({ 
-          content: '❌ Sorry, something went wrong. Please try again later.',
-          ephemeral: true 
+        await interaction.reply({
+          content: '❌ Sorry, something went wrong. Please try again.',
+          ephemeral: true,
         });
       }
     }
+    return;
+  }
+  
+  // Handle modal submissions
+  if (interaction.isModalSubmit()) {
+    try {
+      // Check modal type by prefix
+      if (interaction.customId.startsWith('relay_reply_modal:')) {
+        // Reply modal submission (relay_reply_modal:handle)
+        await handleReplyModalSubmit(interaction as ModalSubmitInteraction);
+      } else if (interaction.customId === CUSTOM_IDS.NEW_CONVERSATION_MODAL) {
+        // New conversation modal submission
+        await handleNewConversationModalSubmit(interaction as ModalSubmitInteraction);
+      } else {
+        console.log(`Unknown modal submission: ${interaction.customId}`);
+      }
+    } catch (error) {
+      console.error('Error handling modal submission:', error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: '❌ Sorry, something went wrong. Please try again.',
+          ephemeral: true,
+        });
+      }
+    }
+    return;
   }
 });
 
