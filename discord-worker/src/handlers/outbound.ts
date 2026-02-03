@@ -1,36 +1,74 @@
 /**
  * Outbound Message Handler
  * 
- * Sends Discord DMs on behalf of Relay users
+ * Sends Discord DMs on behalf of Relay users using a "conversation message" pattern:
  * 
- * Flow:
- * 1. Relay API calls /send endpoint with ENCRYPTED recipient Discord ID
- * 2. Bot decrypts the ID using its private key
- * 3. Bot sends DM to Discord user
+ * 1. When Discord user first messages via /relay, we send a confirmation that becomes 
+ *    the "conversation message"
+ * 2. When Relay user replies, we EDIT the conversation message to append the reply
+ * 3. We also send a brief notification DM that auto-deletes (to trigger Discord notification)
  * 
- * Note: The encrypted Discord ID comes from the server, which stored it
- * when the inbound message arrived. Only the worker can decrypt it.
+ * This creates a pseudo-thread experience where the conversation lives in one editable message.
  */
 
-import { Client, User, Message } from 'discord.js';
+import { Client, User, Message, DMChannel } from 'discord.js';
 import { decryptForWorker } from '../crypto.js';
+
+// How long to show the notification before deleting (ms)
+const NOTIFICATION_DELETE_DELAY = 3000;
 
 export interface SendMessageRequest {
   conversationId: string;
   content: string;
   encryptedRecipientId: string;  // Encrypted Discord user ID (worker decrypts)
   edgeAddress: string;           // Sender's edge address (handle)
-  replyToMessageId?: string;     // Discord message ID to reply to (for threading)
+  conversationMessageId?: string; // Bot's conversation message to edit
 }
 
 export interface SendMessageResponse {
   success: boolean;
   messageId?: string;
+  conversationMessageId?: string;  // The conversation message ID (may be new or existing)
   error?: string;
 }
 
 /**
- * Send a DM to a Discord user
+ * Format a timestamp for display
+ */
+function formatTimestamp(): string {
+  return new Date().toLocaleTimeString('en-US', { 
+    hour: 'numeric', 
+    minute: '2-digit',
+    hour12: true 
+  });
+}
+
+/**
+ * Build the initial conversation message content
+ */
+function buildConversationContent(
+  edgeAddress: string,
+  messages: Array<{ from: 'relay' | 'discord'; content: string; time: string }>
+): string {
+  let content = `💬 **Conversation with &${edgeAddress}**\n`;
+  content += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+  
+  for (const msg of messages) {
+    if (msg.from === 'relay') {
+      content += `**&${edgeAddress}** _(${msg.time})_:\n${msg.content}\n\n`;
+    } else {
+      content += `**You** _(${msg.time})_:\n${msg.content}\n\n`;
+    }
+  }
+  
+  content += `━━━━━━━━━━━━━━━━━━━━\n`;
+  content += `_Reply with_ \`/relay &${edgeAddress} your message\``;
+  
+  return content;
+}
+
+/**
+ * Send a DM to a Discord user, using the conversation message pattern
  */
 export async function handleOutboundDM(
   client: Client,
@@ -63,44 +101,95 @@ export async function handleOutboundDM(
       };
     }
     
-    // Format the message with sender context
-    // Include which Relay handle is responding
-    const formattedContent = `**&${request.edgeAddress}** replied:\n\n${request.content}`;
-    
-    // Send DM - try to reply to original message for threading
     try {
       const dmChannel = await user.createDM();
+      const timestamp = formatTimestamp();
       
-      let sentMessage: Message;
-      
-      // If we have a message to reply to, use Discord's reply feature
-      if (request.replyToMessageId) {
+      // Try to edit the existing conversation message
+      if (request.conversationMessageId) {
         try {
-          const originalMessage = await dmChannel.messages.fetch(request.replyToMessageId);
-          sentMessage = await originalMessage.reply({
-            content: formattedContent,
+          const conversationMessage = await dmChannel.messages.fetch(request.conversationMessageId);
+          
+          // Append the new reply to the existing content
+          const existingContent = conversationMessage.content;
+          const insertPoint = existingContent.lastIndexOf('\n━━━━━━━━━━━━━━━━━━━━\n');
+          
+          let newContent: string;
+          if (insertPoint !== -1) {
+            // Insert before the footer
+            const beforeFooter = existingContent.substring(0, insertPoint);
+            const footer = existingContent.substring(insertPoint);
+            newContent = `${beforeFooter}\n**&${request.edgeAddress}** _(${timestamp})_:\n${request.content}\n${footer}`;
+          } else {
+            // Fallback: just append
+            newContent = `${existingContent}\n\n**&${request.edgeAddress}** _(${timestamp})_:\n${request.content}`;
+          }
+          
+          // Discord has a 2000 char limit - truncate old messages if needed
+          if (newContent.length > 1900) {
+            // Keep header, remove oldest messages, keep recent + footer
+            const lines = newContent.split('\n');
+            const header = lines.slice(0, 3).join('\n');
+            const footer = lines.slice(-3).join('\n');
+            const middle = lines.slice(3, -3);
+            
+            // Remove from the beginning of middle until we fit
+            while (middle.length > 0 && (header + '\n' + middle.join('\n') + '\n' + footer).length > 1800) {
+              middle.shift();
+            }
+            
+            newContent = header + '\n_(earlier messages truncated)_\n\n' + middle.join('\n') + '\n' + footer;
+          }
+          
+          // Edit the conversation message
+          await conversationMessage.edit(newContent);
+          console.log(`✏️ Updated conversation message ${request.conversationMessageId}`);
+          
+          // Send a notification that auto-deletes
+          const notification = await dmChannel.send({
+            content: `🔔 **New message from &${request.edgeAddress}!** _(check above)_`,
           });
-          console.log(`✅ Reply sent to ${user.tag}, replying to message ${request.replyToMessageId}`);
-        } catch (replyError) {
-          // Original message not found or can't reply - send as new DM
-          console.warn(`Could not reply to message ${request.replyToMessageId}, sending as new DM:`, replyError);
-          sentMessage = await dmChannel.send({
-            content: formattedContent,
-          });
+          
+          // Delete the notification after a delay
+          setTimeout(async () => {
+            try {
+              await notification.delete();
+              console.log(`🗑️ Deleted notification ${notification.id}`);
+            } catch (deleteError) {
+              // Notification may already be deleted or inaccessible
+              console.warn('Could not delete notification:', deleteError);
+            }
+          }, NOTIFICATION_DELETE_DELAY);
+          
+          return {
+            success: true,
+            messageId: notification.id,
+            conversationMessageId: request.conversationMessageId,
+          };
+          
+        } catch (editError) {
+          console.warn(`Could not edit conversation message ${request.conversationMessageId}:`, editError);
+          // Fall through to create new conversation message
         }
-      } else {
-        // No message to reply to - send as new DM
-        sentMessage = await dmChannel.send({
-          content: formattedContent,
-        });
       }
       
-      console.log(`✅ DM sent to ${user.tag}, message ID: ${sentMessage.id}`);
+      // No existing conversation message or couldn't edit - create new one
+      const newConversationContent = buildConversationContent(request.edgeAddress, [
+        { from: 'relay', content: request.content, time: timestamp }
+      ]);
+      
+      const conversationMessage = await dmChannel.send({
+        content: newConversationContent,
+      });
+      
+      console.log(`✅ Created new conversation message ${conversationMessage.id} for ${user.tag}`);
       
       return {
         success: true,
-        messageId: sentMessage.id,
+        messageId: conversationMessage.id,
+        conversationMessageId: conversationMessage.id,
       };
+      
     } catch (error) {
       console.error(`Failed to send DM to ${user.tag}:`, error);
       return {

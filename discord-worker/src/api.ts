@@ -77,7 +77,7 @@ export async function forwardToApi(payload: {
   encryptedMetadata?: string;     // Encrypted counterparty info for conversation list display
   discordMessageId?: string;      // Discord message ID for reply threading
   receivedAt: string;
-}): Promise<void> {
+}): Promise<{ conversationId: string; messageId: string; isNewConversation: boolean } | undefined> {
   const timestamp = payload.receivedAt;
   
   // Sign payload to prevent injection attacks
@@ -103,6 +103,40 @@ export async function forwardToApi(payload: {
   if (!response.ok) {
     const error = await response.text();
     throw new Error(`API forward error: ${response.status} - ${error}`);
+  }
+  
+  const result = await response.json() as { conversationId: string; messageId: string; isNewConversation: boolean };
+  return result;
+}
+
+/**
+ * Update the conversation message ID for a conversation
+ * This is called after we create the bot's conversation message in Discord
+ */
+export async function updateConversationMessageId(
+  conversationId: string | undefined,
+  conversationMessageId: string
+): Promise<void> {
+  if (!conversationId) {
+    console.warn('No conversation ID to update');
+    return;
+  }
+  
+  const response = await fetch(`${API_BASE_URL}/v1/discord/conversation-message`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Worker ${API_SECRET}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      conversationId,
+      conversationMessageId,
+    }),
+  });
+  
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to update conversation message ID: ${response.status} - ${error}`);
   }
 }
 

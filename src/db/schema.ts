@@ -261,6 +261,8 @@ export type DiscordBridgeMetadata = {
   // This ensures zero-knowledge: the server never sees the actual Discord user ID
   encryptedDiscordId: string;
   discordMessageId?: string;
+  // The bot's conversation message ID - this is the message we edit to append replies
+  conversationMessageId?: string;
 };
 
 export type SlackBridgeMetadata = {

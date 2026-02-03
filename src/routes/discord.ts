@@ -275,6 +275,7 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
   // We get the MOST RECENT message to reply to for threading
   const [bridgeMsg] = await db
     .select({ 
+      messageId: bridgeMessages.messageId,
       metadata: bridgeMessages.metadata,
       platformMessageId: bridgeMessages.platformMessageId,
     })
@@ -296,8 +297,8 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
     return c.json({ code: 'NO_RECIPIENT', message: 'Could not find encrypted Discord ID' }, 400);
   }
 
-  // Get the Discord message ID to reply to (for threading)
-  const replyToMessageId = discordMetadata.discordMessageId || bridgeMsg.platformMessageId;
+  // Get the conversation message ID (the bot's message we'll edit to append replies)
+  const conversationMessageId = discordMetadata.conversationMessageId;
 
   // Forward to Discord worker with the ENCRYPTED Discord ID
   // Worker will decrypt it using its private key to get the actual Discord user ID
@@ -313,7 +314,7 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
         content: body.content,
         encryptedRecipientId: discordMetadata.encryptedDiscordId,  // Worker decrypts this
         edgeAddress: edge.address,
-        replyToMessageId,  // For reply threading
+        conversationMessageId,  // For editing the conversation message
       }),
     });
 
@@ -323,10 +324,27 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
       return c.json({ code: 'WORKER_ERROR', message: 'Failed to send Discord message' }, 500);
     }
 
-    const result = await response.json() as { success: boolean; messageId?: string; error?: string };
+    const result = await response.json() as { 
+      success: boolean; 
+      messageId?: string; 
+      conversationMessageId?: string;
+      error?: string;
+    };
 
     if (!result.success) {
       return c.json({ code: 'SEND_FAILED', message: result.error || 'Failed to send' }, 500);
+    }
+
+    // If worker returned a new conversation message ID, store it
+    if (result.conversationMessageId && result.conversationMessageId !== conversationMessageId) {
+      const updatedMetadata: DiscordBridgeMetadata = {
+        ...discordMetadata,
+        conversationMessageId: result.conversationMessageId,
+      };
+      await db
+        .update(bridgeMessages)
+        .set({ metadata: updatedMetadata })
+        .where(eq(bridgeMessages.messageId, bridgeMsg.messageId));
     }
 
     // Store outbound message
@@ -355,12 +373,62 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
     return c.json({
       messageId,
       discordMessageId: result.messageId,
+      conversationMessageId: result.conversationMessageId,
     }, 201);
 
   } catch (error) {
     console.error('Discord send error:', error);
     return c.json({ code: 'WORKER_UNREACHABLE', message: 'Could not reach Discord worker' }, 503);
   }
+});
+
+/**
+ * Update the conversation message ID for a Discord conversation
+ * Called by the worker after creating the bot's conversation message
+ */
+discordRoutes.post('/conversation-message', workerAuthMiddleware, async (c) => {
+  const body = await c.req.json<{
+    conversationId: string;
+    conversationMessageId: string;
+  }>();
+
+  if (!body.conversationId || !body.conversationMessageId) {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
+  }
+
+  // Find the bridge message for this conversation and update its metadata
+  const [bridgeMsg] = await db
+    .select({ 
+      messageId: bridgeMessages.messageId,
+      metadata: bridgeMessages.metadata,
+    })
+    .from(bridgeMessages)
+    .innerJoin(messages, eq(messages.id, bridgeMessages.messageId))
+    .where(and(
+      eq(messages.conversationId, body.conversationId),
+      eq(bridgeMessages.bridgeType, 'discord')
+    ))
+    .limit(1);
+
+  if (!bridgeMsg) {
+    return c.json({ code: 'NOT_FOUND', message: 'No bridge message found for conversation' }, 404);
+  }
+
+  // Update metadata with conversation message ID
+  const existingMetadata = (bridgeMsg.metadata || {}) as DiscordBridgeMetadata;
+  const updatedMetadata: DiscordBridgeMetadata = {
+    ...existingMetadata,
+    conversationMessageId: body.conversationMessageId,
+  };
+
+  await db
+    .update(bridgeMessages)
+    .set({ metadata: updatedMetadata })
+    .where(eq(bridgeMessages.messageId, bridgeMsg.messageId));
+
+  console.log(`Updated conversation message ID for ${body.conversationId}: ${body.conversationMessageId}`);
+
+  return c.json({ success: true });
 });
 
 /**

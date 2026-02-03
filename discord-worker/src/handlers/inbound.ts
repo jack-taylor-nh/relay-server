@@ -15,7 +15,7 @@
  */
 
 import { Message, ChatInputCommandInteraction } from 'discord.js';
-import { lookupEdgeByHandle, forwardToApi } from '../api.js';
+import { lookupEdgeByHandle, forwardToApi, updateConversationMessageId } from '../api.js';
 import { encryptPayload, hashDiscordId, encryptForWorkerStorage } from '../crypto.js';
 
 // Command format: /relay &handle message OR /relay handle message
@@ -104,7 +104,7 @@ export async function handleInboundDM(message: Message): Promise<void> {
   // Forward to Relay API
   // Note: senderHash for matching, encryptedDiscordId for reply routing (only worker can decrypt)
   try {
-    await forwardToApi({
+    const apiResult = await forwardToApi({
       edgeId: edgeInfo.id,
       senderHash,
       encryptedRecipientId: encryptedDiscordId,  // Encrypted for worker's key
@@ -114,13 +114,35 @@ export async function handleInboundDM(message: Message): Promise<void> {
       receivedAt: new Date().toISOString(),
     });
     
-    // Confirm receipt
-    await message.react('✅');
-    await message.reply({
-      content: `📨 Message sent to \`&${targetHandle}\`! They'll see it in Relay and can reply here.`,
+    // Create the conversation message with proper formatting
+    const timestamp = new Date().toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
     });
     
-    console.log(`✅ Message forwarded to Relay edge ${edgeInfo.id}`);
+    let conversationContent = `💬 **Conversation with &${targetHandle}**\n`;
+    conversationContent += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+    conversationContent += `**You** _(${timestamp})_:\n${messageContent}\n\n`;
+    conversationContent += `━━━━━━━━━━━━━━━━━━━━\n`;
+    conversationContent += `_Reply with_ \`/relay &${targetHandle} your message\``;
+    
+    // React to confirm and send the conversation message
+    await message.react('✅');
+    const replyMessage = await message.reply({
+      content: conversationContent,
+    });
+    
+    // Store the conversation message ID for future edits
+    if (replyMessage) {
+      try {
+        await updateConversationMessageId(apiResult?.conversationId, replyMessage.id);
+      } catch (updateError) {
+        console.warn('Could not update conversation message ID:', updateError);
+      }
+    }
+    
+    console.log(`✅ Message forwarded to Relay edge ${edgeInfo.id}, conversation message: ${replyMessage.id}`);
   } catch (error) {
     console.error('Failed to forward message:', error);
     await message.reply('❌ Failed to send message. Please try again later.');
@@ -182,10 +204,10 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
   const encryptedPayload = encryptPayload(messagePayload, edgeInfo.x25519PublicKey);
   const encryptedMetadata = encryptPayload(counterpartyMetadata, edgeInfo.x25519PublicKey);
   
-  // Forward to Relay API
+  // Forward to Relay API first to check if conversation exists
   // Note: senderHash for matching, encryptedRecipientId for reply routing (only worker can decrypt)
   try {
-    await forwardToApi({
+    const apiResult = await forwardToApi({
       edgeId: edgeInfo.id,
       senderHash,
       encryptedRecipientId: encryptedDiscordId,  // Encrypted for worker's key
@@ -195,10 +217,33 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
       receivedAt: new Date().toISOString(),
     });
     
-    // Confirm receipt
-    await interaction.editReply(`📨 Message sent to \`&${targetHandle}\`! They'll see it in Relay and can reply here.`);
+    // Create the conversation message with proper formatting
+    const timestamp = new Date().toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
+    });
     
-    console.log(`✅ Message forwarded to Relay edge ${edgeInfo.id}`);
+    let conversationContent = `💬 **Conversation with &${targetHandle}**\n`;
+    conversationContent += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+    conversationContent += `**You** _(${timestamp})_:\n${messageContent}\n\n`;
+    conversationContent += `━━━━━━━━━━━━━━━━━━━━\n`;
+    conversationContent += `_Reply with_ \`/relay &${targetHandle} your message\``;
+    
+    // Send the conversation message and capture its ID
+    const replyMessage = await interaction.editReply(conversationContent);
+    
+    // Store the conversation message ID for future edits
+    // We need to update the API with this message ID
+    if (replyMessage && 'id' in replyMessage) {
+      try {
+        await updateConversationMessageId(apiResult?.conversationId, replyMessage.id);
+      } catch (updateError) {
+        console.warn('Could not update conversation message ID:', updateError);
+      }
+    }
+    
+    console.log(`✅ Message forwarded to Relay edge ${edgeInfo.id}, conversation message: ${replyMessage && 'id' in replyMessage ? replyMessage.id : 'unknown'}`);
   } catch (error) {
     console.error('Failed to forward message:', error);
     await interaction.editReply('❌ Failed to send message. Please try again later.');
