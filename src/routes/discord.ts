@@ -8,7 +8,7 @@
  */
 
 import { Hono } from 'hono';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
@@ -70,6 +70,7 @@ discordRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
     encryptedRecipientId: string; // Encrypted Discord user ID (only worker can decrypt for replies)
     encryptedPayload: string;    // Discord message encrypted for Relay user (zero-knowledge)
     encryptedMetadata?: string;  // Encrypted counterparty info for conversation list display
+    discordMessageId?: string;   // Discord message ID for reply threading
     receivedAt: string;
   };
   
@@ -164,10 +165,11 @@ discordRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
     bridgeType: 'discord',
     senderExternalId: body.senderHash,  // Hash for conversation matching
     senderDisplayName: null,            // Display name is in encrypted payload
-    platformMessageId: null,
+    platformMessageId: body.discordMessageId || null,  // For reply threading
     metadata: {
       // Store encrypted Discord ID - only worker can decrypt for replies
       encryptedDiscordId: body.encryptedRecipientId,
+      discordMessageId: body.discordMessageId,  // For reply threading
     } as DiscordBridgeMetadata,
   });
 
@@ -268,16 +270,21 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
     return c.json({ code: 'EDGE_DISABLED', message: 'Edge is disabled' }, 410);
   }
 
-  // Look up the encrypted Discord ID from the conversation's bridge messages
+  // Look up the encrypted Discord ID and most recent message ID from the conversation's bridge messages
   // The actual Discord ID is encrypted - only the worker can decrypt it
+  // We get the MOST RECENT message to reply to for threading
   const [bridgeMsg] = await db
-    .select({ metadata: bridgeMessages.metadata })
+    .select({ 
+      metadata: bridgeMessages.metadata,
+      platformMessageId: bridgeMessages.platformMessageId,
+    })
     .from(bridgeMessages)
     .innerJoin(messages, eq(messages.id, bridgeMessages.messageId))
     .where(and(
       eq(messages.conversationId, body.conversationId),
       eq(bridgeMessages.bridgeType, 'discord')
     ))
+    .orderBy(sql`${messages.createdAt} DESC`)  // Get most recent for reply threading
     .limit(1);
 
   if (!bridgeMsg || !bridgeMsg.metadata) {
@@ -288,6 +295,9 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
   if (!discordMetadata.encryptedDiscordId) {
     return c.json({ code: 'NO_RECIPIENT', message: 'Could not find encrypted Discord ID' }, 400);
   }
+
+  // Get the Discord message ID to reply to (for threading)
+  const replyToMessageId = discordMetadata.discordMessageId || bridgeMsg.platformMessageId;
 
   // Forward to Discord worker with the ENCRYPTED Discord ID
   // Worker will decrypt it using its private key to get the actual Discord user ID
@@ -303,6 +313,7 @@ discordRoutes.post('/send', authMiddleware, async (c) => {
         content: body.content,
         encryptedRecipientId: discordMetadata.encryptedDiscordId,  // Worker decrypts this
         edgeAddress: edge.address,
+        replyToMessageId,  // For reply threading
       }),
     });
 

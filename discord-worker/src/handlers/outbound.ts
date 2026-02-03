@@ -12,17 +12,15 @@
  * when the inbound message arrived. Only the worker can decrypt it.
  */
 
-import { Client, User } from 'discord.js';
+import { Client, User, Message } from 'discord.js';
 import { decryptForWorker } from '../crypto.js';
-
-// Footer appended to all outbound messages
-const RELAY_FOOTER = '\n\n—\n_Sent via Relay – userelay.org_';
 
 export interface SendMessageRequest {
   conversationId: string;
   content: string;
   encryptedRecipientId: string;  // Encrypted Discord user ID (worker decrypts)
   edgeAddress: string;           // Sender's edge address (handle)
+  replyToMessageId?: string;     // Discord message ID to reply to (for threading)
 }
 
 export interface SendMessageResponse {
@@ -67,14 +65,35 @@ export async function handleOutboundDM(
     
     // Format the message with sender context
     // Include which Relay handle is responding
-    const formattedContent = `**&${request.edgeAddress}** replied:\n\n${request.content}${RELAY_FOOTER}`;
+    const formattedContent = `**&${request.edgeAddress}** replied:\n\n${request.content}`;
     
-    // Send DM
+    // Send DM - try to reply to original message for threading
     try {
       const dmChannel = await user.createDM();
-      const sentMessage = await dmChannel.send({
-        content: formattedContent,
-      });
+      
+      let sentMessage: Message;
+      
+      // If we have a message to reply to, use Discord's reply feature
+      if (request.replyToMessageId) {
+        try {
+          const originalMessage = await dmChannel.messages.fetch(request.replyToMessageId);
+          sentMessage = await originalMessage.reply({
+            content: formattedContent,
+          });
+          console.log(`✅ Reply sent to ${user.tag}, replying to message ${request.replyToMessageId}`);
+        } catch (replyError) {
+          // Original message not found or can't reply - send as new DM
+          console.warn(`Could not reply to message ${request.replyToMessageId}, sending as new DM:`, replyError);
+          sentMessage = await dmChannel.send({
+            content: formattedContent,
+          });
+        }
+      } else {
+        // No message to reply to - send as new DM
+        sentMessage = await dmChannel.send({
+          content: formattedContent,
+        });
+      }
       
       console.log(`✅ DM sent to ${user.tag}, message ID: ${sentMessage.id}`);
       

@@ -110,6 +110,7 @@ export async function handleInboundDM(message: Message): Promise<void> {
       encryptedRecipientId: encryptedDiscordId,  // Encrypted for worker's key
       encryptedPayload,
       encryptedMetadata,  // Encrypted counterparty info for conversation list
+      discordMessageId: message.id,  // For reply threading
       receivedAt: new Date().toISOString(),
     });
     
@@ -190,6 +191,7 @@ export async function handleSlashCommand(interaction: ChatInputCommandInteractio
       encryptedRecipientId: encryptedDiscordId,  // Encrypted for worker's key
       encryptedPayload,
       encryptedMetadata,  // Encrypted counterparty info for conversation list
+      discordMessageId: interaction.id,  // For reply threading (using interaction ID)
       receivedAt: new Date().toISOString(),
     });
     
