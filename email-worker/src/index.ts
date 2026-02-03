@@ -15,6 +15,9 @@ import PostalMime from 'postal-mime';
 import * as nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
 
+// Footer appended to all outbound emails
+const RELAY_FOOTER = '\n\n—\nSent via Relay – userelay.org';
+
 interface Env {
   API_BASE_URL: string;
   API_SECRET: string; // Shared secret for worker-to-API auth
@@ -468,7 +471,7 @@ async function handleSendEmail(
       from: `Relay <${body.edgeAddress}>`,
       to: [recipientEmail],
       subject: body.subject,
-      text: body.content,
+      text: body.content + RELAY_FOOTER,
     };
 
     if (body.inReplyTo) {
@@ -580,7 +583,7 @@ async function handleSendRatchetEmail(
       from: `Relay <${body.edgeAddress}>`,
       to: [recipientEmail],
       subject: body.subject,
-      text: plaintextContent,
+      text: plaintextContent + RELAY_FOOTER,
     };
 
     if (body.inReplyTo) {
