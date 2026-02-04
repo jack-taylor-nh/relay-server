@@ -85,6 +85,21 @@ conversationRoutes.get('/', async (c) => {
   const items = hasMore ? results.slice(0, -1) : results;
   const nextCursor = hasMore ? items[items.length - 1].lastActivityAt.toISOString() : null;
 
+  // Get last message ID for each conversation (for preview support)
+  const conversationIdsInPage = items.map(c => c.id);
+  const lastMessagesByConv = conversationIdsInPage.length > 0 
+    ? await db
+        .select({ 
+          conversationId: messages.conversationId, 
+          lastMessageId: sql<string>`(SELECT id FROM messages m2 WHERE m2.conversation_id = messages.conversation_id ORDER BY m2.created_at DESC LIMIT 1)`,
+        })
+        .from(messages)
+        .where(inArray(messages.conversationId, conversationIdsInPage))
+        .groupBy(messages.conversationId)
+    : [];
+  
+  const lastMessageIdMap = new Map(lastMessagesByConv.map(lm => [lm.conversationId, lm.lastMessageId]));
+
   // Get participants and edge info for each conversation
   const conversationsWithDetails = await Promise.all(
     items.map(async (conv) => {
@@ -154,6 +169,7 @@ conversationRoutes.get('/', async (c) => {
           edgeId: counterpartyEdgeId,
           x25519PublicKey: counterpartyX25519Key,
         } : null,
+        lastMessageId: lastMessageIdMap.get(conv.id) || null,  // For preview lookup
         lastActivityAt: conv.lastActivityAt.toISOString(),
         createdAt: conv.createdAt.toISOString(),
       };
