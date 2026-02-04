@@ -48,21 +48,27 @@ edgeRoutes.get('/types', async (c) => {
  * - bridge: Bridge edge lookup (address = bridge name, e.g., "email")
  */
 edgeRoutes.post('/resolve', async (c) => {
+  console.log('[/edge/resolve] Request received');
   try {
     const body = await c.req.json<{ 
       type: EdgeType | 'bridge';
       address: string;
     }>();
+    
+    console.log('[/edge/resolve] Body:', JSON.stringify(body));
 
     const type = body.type;
     const address = body.address?.trim().toLowerCase();
 
     if (!type || !address) {
+      console.log('[/edge/resolve] Missing type or address');
       return c.json({ 
         code: 'VALIDATION_ERROR', 
         message: 'Both type and address are required' 
       }, 400);
     }
+    
+    console.log('[/edge/resolve] Looking up edge:', { type, address });
 
     // Handle bridge edge resolution (special case)
     if (type === 'bridge') {
