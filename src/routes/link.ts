@@ -14,7 +14,8 @@
  */
 
 import { Hono } from 'hono';
-import { eq, and, desc } from 'drizzle-orm';
+import { stream } from 'hono/streaming';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { db } from '../db/index.js';
 import { 
@@ -25,7 +26,7 @@ import {
   messages,
   type SecurityLevel 
 } from '../db/schema.js';
-import { checkRateLimit } from '../core/redis.js';
+import { checkRateLimit, publish, subscribe, unsubscribe } from '../core/redis.js';
 
 export const linkRoutes = new Hono();
 
@@ -497,6 +498,13 @@ linkRoutes.post('/:linkId/messages', async (c) => {
     .set(sessionUpdate)
     .where(eq(visitorSessions.id, session.id));
   
+  // Publish to Redis for SSE updates (extension side)
+  await publish(`conversation:${session.conversationId}`, {
+    type: 'new_message',
+    conversationId: session.conversationId,
+    messageId,
+  });
+  
   return c.json({
     messageId,
     conversationId: session.conversationId,
@@ -641,4 +649,144 @@ linkRoutes.post('/:linkId/session/verify', async (c) => {
     code: 'SESSION_NOT_FOUND',
     message: 'No matching session found' 
   }, 404);
+});
+
+/**
+ * GET /v1/link/:linkId/stream/:visitorPubKey
+ * SSE endpoint for real-time message updates for link visitors.
+ * Replaces polling - visitor connects once and receives push updates.
+ * 
+ * Events:
+ * - message: New message arrived
+ * - ping: Keepalive
+ */
+linkRoutes.get('/:linkId/stream/:visitorPubKey', async (c) => {
+  const linkId = c.req.param('linkId');
+  const visitorPubKey = c.req.param('visitorPubKey');
+  
+  console.log(`[Link SSE] Visitor connecting: ${linkId}/${visitorPubKey.slice(0, 8)}...`);
+  
+  // Verify session exists
+  const [session] = await db
+    .select()
+    .from(visitorSessions)
+    .where(and(
+      eq(visitorSessions.contactLinkEdgeId, (await db
+        .select({ id: edges.id })
+        .from(edges)
+        .where(and(
+          eq(edges.type, 'contact_link'),
+          eq(edges.address, linkId),
+          eq(edges.status, 'active')
+        ))
+        .limit(1))[0]?.id || '__none__'),
+      eq(visitorSessions.visitorPublicKey, visitorPubKey)
+    ))
+    .limit(1);
+  
+  if (!session) {
+    return c.json({ 
+      code: 'SESSION_NOT_FOUND',
+      message: 'Session not found' 
+    }, 404);
+  }
+  
+  return stream(c, async (stream) => {
+    // Set SSE headers
+    c.header('Content-Type', 'text/event-stream');
+    c.header('Cache-Control', 'no-cache');
+    c.header('Connection', 'keep-alive');
+    c.header('X-Accel-Buffering', 'no'); // Disable nginx buffering
+    
+    let keepAliveInterval: NodeJS.Timeout | null = null;
+    let messageHandler: ((message: string) => void) | null = null;
+    const channel = `conversation:${session.conversationId}`;
+    
+    try {
+      // Send initial connected event
+      await stream.write('event: connected\ndata: {"status":"ok"}\n\n');
+      
+      // Set up keepalive ping (every 30s)
+      keepAliveInterval = setInterval(async () => {
+        try {
+          await stream.write('event: ping\ndata: {}\n\n');
+        } catch (error) {
+          console.log(`[Link SSE] Keepalive failed for ${linkId}`);
+          cleanup();
+        }
+      }, 30000);
+      
+      // Subscribe to conversation's Redis channel
+      messageHandler = async (message: string) => {
+        try {
+          const event = JSON.parse(message);
+          console.log(`[Link SSE] Received event:`, event);
+          
+          // Fetch the actual message from DB
+          if (event.type === 'new_message' && event.messageId) {
+            const [msg] = await db
+              .select({
+                id: messages.id,
+                ciphertext: messages.ciphertext,
+                ephemeralPubkey: messages.ephemeralPubkey,
+                nonce: messages.nonce,
+                pn: messages.ratchetPn,
+                n: messages.ratchetN,
+                createdAt: messages.createdAt,
+                senderExternalId: messages.senderExternalId,
+              })
+              .from(messages)
+              .where(and(
+                eq(messages.id, event.messageId),
+                session.conversationId ? eq(messages.conversationId, session.conversationId) : sql`1=0`
+              ))
+              .limit(1);
+            
+            if (msg && !msg.senderExternalId) {
+              // Only send messages that are FROM the relay user (not from visitor)
+              // Visitor's messages have senderExternalId set to their pubkey
+              const messageData = {
+                messages: [{
+                  id: msg.id,
+                  ciphertext: msg.ciphertext,
+                  ephemeralPubkey: msg.ephemeralPubkey,
+                  nonce: msg.nonce,
+                  pn: msg.pn,
+                  n: msg.n,
+                  createdAt: msg.createdAt.toISOString(),
+                }]
+              };
+              await stream.write(`event: message\ndata: ${JSON.stringify(messageData)}\n\n`);
+              console.log(`[Link SSE] Sent message ${msg.id} to visitor`);
+            }
+          }
+        } catch (error) {
+          console.error(`[Link SSE] Failed to process event:`, error);
+        }
+      };
+      
+      await subscribe(channel, messageHandler);
+      console.log(`[Link SSE] Subscribed to ${channel}`);
+      
+      // Wait for client disconnect
+      await stream.sleep(Number.MAX_SAFE_INTEGER);
+      
+    } catch (error) {
+      console.log(`[Link SSE] Connection closed for ${linkId}:`, error);
+    } finally {
+      cleanup();
+    }
+    
+    function cleanup() {
+      if (keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
+      }
+      if (messageHandler) {
+        unsubscribe(channel, messageHandler);
+        console.log(`[Link SSE] Unsubscribed from ${channel}`);
+        messageHandler = null;
+      }
+    }
+  });
 });

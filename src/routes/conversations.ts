@@ -13,7 +13,7 @@ import { db, conversations, conversationParticipants, messages, edges, type Secu
 import { authMiddleware } from '../middleware/auth.js';
 import { DEFAULT_PAGE_SIZE } from '../core/constants.js';
 import { computeQueryKey } from '../lib/queryKey.js';
-import { getCached, invalidateCache } from '../core/redis.js';
+import { getCached, invalidateCache, publish } from '../core/redis.js';
 
 export const conversationRoutes = new Hono();
 
@@ -436,6 +436,13 @@ conversationRoutes.post('/:id/messages', async (c) => {
       ...(newConvSecurityLevel !== currentConvSecurityLevel && { securityLevel: newConvSecurityLevel }),
     })
     .where(eq(conversations.id, conversationId));
+
+  // Publish to Redis for SSE updates (to link visitors)
+  await publish(`conversation:${conversationId}`, {
+    type: 'new_message',
+    conversationId,
+    messageId,
+  });
 
   return c.json({
     id: messageId,
