@@ -22,6 +22,7 @@ import {
   MessageEntry,
   ConversationContext,
   ComponentType,
+  parseExistingMessages,
 } from './components.js';
 
 // How long to show the notification before deleting (ms)
@@ -181,15 +182,21 @@ export async function handleOutboundDM(
         try {
           const conversationMessage = await dmChannel.messages.fetch(request.conversationMessageId);
           
-          // Parse existing messages - check if legacy format or new format
+          // Parse existing messages - check if Components V2 or legacy format
           let existingMessages: MessageEntry[] = [];
           
-          // If the message has content (legacy format), parse from there
-          if (conversationMessage.content && conversationMessage.content.includes('━━━━')) {
-            existingMessages = parseExistingMessagesFromLegacy(conversationMessage.content, request.edgeAddress);
+          // Try Components V2 format first (message will have components array)
+          if (conversationMessage.components && conversationMessage.components.length > 0) {
+            // Convert discord.js components to raw format for parsing
+            const rawComponents = conversationMessage.components.map(row => row.toJSON());
+            existingMessages = parseExistingMessages(rawComponents);
+            console.log(`📜 Parsed ${existingMessages.length} existing messages from Components V2`);
           }
-          // Note: For Components V2 messages, we'd need to fetch via REST API
-          // For now, we track messages by accumulating them
+          // Fall back to legacy text format
+          else if (conversationMessage.content && conversationMessage.content.includes('━━━━')) {
+            existingMessages = parseExistingMessagesFromLegacy(conversationMessage.content, request.edgeAddress);
+            console.log(`📜 Parsed ${existingMessages.length} existing messages from legacy format`);
+          }
           
           // Add new message
           existingMessages.push(newMessage);

@@ -141,22 +141,10 @@ export function buildConversationComponents(context: ConversationContext): any[]
       ? ICONS.RELAY 
       : (msg.avatarUrl || discordAvatarUrl);
     
-    // Use Section with Thumbnail accessory for each message
+    // Use Text Display for each message (no thumbnail - too large)
     messageSections.push({
-      type: ComponentType.SECTION,
-      components: [
-        {
-          type: ComponentType.TEXT_DISPLAY,
-          content: `**${msg.senderName}** ${msg.timestamp}\n${msg.content}`,
-        },
-      ],
-      accessory: {
-        type: ComponentType.THUMBNAIL,
-        media: {
-          url: avatarUrl,
-        },
-        description: isFromRelay ? 'Relay User' : 'Discord User',
-      },
+      type: ComponentType.TEXT_DISPLAY,
+      content: `**${msg.senderName}** ${msg.timestamp}\n${msg.content}`,
     });
     
     // Add small separator between messages (except after last)
@@ -177,7 +165,7 @@ export function buildConversationComponents(context: ConversationContext): any[]
       // Header
       {
         type: ComponentType.TEXT_DISPLAY,
-        content: `## 💬 Conversation with &${context.targetHandle}`,
+        content: `## Conversation with &${context.targetHandle}`,
       },
       // Separator after header
       {
@@ -200,13 +188,13 @@ export function buildConversationComponents(context: ConversationContext): any[]
           {
             type: ComponentType.BUTTON,
             style: ButtonStyle.PRIMARY,
-            label: '✏️ Reply',
+            label: 'Reply',
             custom_id: `${CUSTOM_IDS.REPLY_BUTTON}:${context.targetHandle}`,
           },
           {
             type: ComponentType.BUTTON,
             style: ButtonStyle.SECONDARY,
-            label: '💬 New Conversation',
+            label: 'New Conversation',
             custom_id: CUSTOM_IDS.NEW_CONVERSATION_BUTTON,
           },
         ],
@@ -344,6 +332,58 @@ export function buildNewConversation(
 }
 
 /**
+ * Parse existing messages from Components V2 message data
+ * 
+ * Returns array of MessageEntry from the existing conversation.
+ * Works with both old Section-based and new TextDisplay-based formats.
+ */
+export function parseExistingMessages(components: any[]): MessageEntry[] {
+  const messages: MessageEntry[] = [];
+  
+  // Find the container
+  const container = components.find(c => c.type === ComponentType.CONTAINER);
+  if (!container || !container.components) {
+    return messages;
+  }
+  
+  for (const component of container.components) {
+    // Handle old Section-based format
+    if (component.type === ComponentType.SECTION) {
+      const textDisplay = component.components?.find((c: any) => c.type === ComponentType.TEXT_DISPLAY);
+      if (textDisplay?.content) {
+        const match = textDisplay.content.match(/\*\*(.+?)\*\* (<t:\d+:t>)\n([\s\S]+)/);
+        if (match) {
+          const isFromRelay = component.accessory?.description === 'Relay User';
+          messages.push({
+            from: isFromRelay ? 'relay' : 'discord',
+            senderName: match[1],
+            timestamp: match[2],
+            content: match[3],
+          });
+        }
+      }
+    }
+    // Handle new TextDisplay-based format (no section wrapper)
+    else if (component.type === ComponentType.TEXT_DISPLAY) {
+      const match = component.content?.match(/\*\*(.+?)\*\* (<t:\d+:t>)\n([\s\S]+)/);
+      if (match) {
+        // Determine if from Relay based on sender name (starts with &)
+        const senderName = match[1];
+        const isFromRelay = senderName.startsWith('&');
+        messages.push({
+          from: isFromRelay ? 'relay' : 'discord',
+          senderName,
+          timestamp: match[2],
+          content: match[3],
+        });
+      }
+    }
+  }
+  
+  return messages;
+}
+
+/**
  * Append a message to existing conversation components
  * 
  * Note: With Components V2, we need to rebuild the entire component structure.
@@ -355,31 +395,7 @@ export function appendToConversation(
   targetHandle: string
 ): { components: any[]; flags: number } {
   // Extract existing messages from components
-  const messages: MessageEntry[] = [];
-  
-  // Find the container
-  const container = existingComponents.find(c => c.type === ComponentType.CONTAINER);
-  if (container && container.components) {
-    // Find all sections (which contain messages)
-    for (const component of container.components) {
-      if (component.type === ComponentType.SECTION) {
-        // Parse the message from section
-        const textDisplay = component.components?.find((c: any) => c.type === ComponentType.TEXT_DISPLAY);
-        if (textDisplay?.content) {
-          const match = textDisplay.content.match(/\*\*(.+?)\*\* (<t:\d+:t>)\n([\s\S]+)/);
-          if (match) {
-            const isFromRelay = component.accessory?.description === 'Relay User';
-            messages.push({
-              from: isFromRelay ? 'relay' : 'discord',
-              senderName: match[1],
-              timestamp: match[2],
-              content: match[3],
-            });
-          }
-        }
-      }
-    }
-  }
+  const messages = parseExistingMessages(existingComponents);
   
   // Add new message
   messages.push(newMessage);

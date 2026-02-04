@@ -29,6 +29,7 @@ import {
   MessageEntry,
   ConversationContext,
   getDiscordAvatarUrl,
+  parseExistingMessages,
 } from './components.js';
 
 // Command format: /relay &handle message OR /relay handle message
@@ -137,6 +138,40 @@ function parseExistingMessagesFromLegacy(content: string): MessageEntry[] {
 }
 
 /**
+ * Fetch existing message components from Discord API
+ */
+async function fetchMessageComponents(channelId: string, messageId: string): Promise<any[] | null> {
+  try {
+    const response = await fetch(
+      `https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+        },
+      }
+    );
+    
+    if (!response.ok) {
+      console.warn(`Could not fetch message ${messageId}: ${response.status}`);
+      return null;
+    }
+    
+    const data = await response.json() as { components?: any[]; content?: string };
+    
+    // Return components if present
+    if (data.components && data.components.length > 0) {
+      return data.components;
+    }
+    
+    return null;
+  } catch (error) {
+    console.warn('Error fetching message:', error);
+    return null;
+  }
+}
+
+/**
  * Core function to send a message to a Relay user and create/update the conversation UI
  */
 async function sendToRelayUser(params: {
@@ -210,16 +245,19 @@ async function sendToRelayUser(params: {
     avatarUrl: getDiscordAvatarUrl(discordUserId, discordAvatarHash),
   };
   
-  // Build conversation context
+  // Build conversation context - fetch existing messages if we have a conversation message
   let existingMessages: MessageEntry[] = [];
   
-  // If we have an existing conversation message, try to parse existing messages
-  // For now, we start fresh with Components V2 - future enhancement could parse existing
   if (conversationMessageId) {
-    // We'll just add to existing - in practice you'd fetch and parse
-    // For simplicity, we start fresh when migrating to Components V2
+    // Fetch existing components from Discord
+    const existingComponents = await fetchMessageComponents(channelId, conversationMessageId);
+    if (existingComponents) {
+      existingMessages = parseExistingMessages(existingComponents);
+      console.log(`📜 Parsed ${existingMessages.length} existing messages from conversation`);
+    }
   }
   
+  // Add new message
   existingMessages.push(newMessage);
   
   // Truncate if needed
