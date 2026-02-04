@@ -16,6 +16,7 @@ import naclUtil from 'tweetnacl-util';
 import { db, edges, conversations, conversationParticipants, messages, bridgeMessages, type EmailBridgeMetadata } from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { computeQueryKey } from '../lib/queryKey.js';
+import { invalidateCache, publish } from '../core/redis.js';
 
 const { decodeBase64 } = naclUtil;
 
@@ -223,6 +224,13 @@ emailRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
       lastActivityAt: now,
     })
     .where(eq(edges.id, body.edgeId));
+
+  // Invalidate conversation cache for all users
+  await invalidateCache(`conversations:*`);
+  
+  // TODO: Publish SSE event to recipient
+  // Currently skipped because we can't easily reverse ownerQueryKey to identityId
+  // Recipients will get updates via polling fallback (60s)
 
   return c.json({
     conversationId,
