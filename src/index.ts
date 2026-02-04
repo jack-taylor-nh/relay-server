@@ -16,6 +16,7 @@ import { messageRoutes } from './routes/messages.js';
 import { emailRoutes } from './routes/email.js';
 import { discordRoutes } from './routes/discord.js';
 import { assetsRoutes } from './routes/assets.js';
+import { linkRoutes } from './routes/link.js';
 
 const app = new Hono();
 
@@ -30,6 +31,9 @@ app.use('*', cors({
     // Allow our domains
     if (origin?.endsWith('.userelay.org')) return origin;
     if (origin === 'https://userelay.org') return origin;
+    // Allow rlymsg.com domains (API, link frontend)
+    if (origin?.endsWith('.rlymsg.com')) return origin;
+    if (origin === 'https://rlymsg.com') return origin;
     // Allow Railway preview URLs
     if (origin?.endsWith('.up.railway.app')) return origin;
     return null;
@@ -61,6 +65,7 @@ api.route('/conversations', conversationRoutes);
 api.route('/messages', messageRoutes);
 api.route('/email', emailRoutes);
 api.route('/discord', discordRoutes);
+api.route('/link', linkRoutes);
 
 app.route('/v1', api);
 

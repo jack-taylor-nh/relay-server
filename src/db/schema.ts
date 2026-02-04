@@ -352,6 +352,44 @@ export const rateLimitLedger = pgTable('rate_limit_ledger', {
 }));
 
 // ============================================
+// Visitor Sessions (Contact Link Anonymous Users)
+// ============================================
+
+/**
+ * Stores visitor sessions for Contact Link conversations.
+ * Visitors derive a keypair from PIN + linkId client-side.
+ * The encrypted ratchet state allows them to resume E2EE conversations
+ * without the server ever seeing the PIN or private key.
+ */
+export const visitorSessions = pgTable('visitor_sessions', {
+  /** Unique session ID (ulid) */
+  id: text('id').primaryKey(),
+  /** Contact link edge ID this visitor connected through */
+  contactLinkEdgeId: text('contact_link_edge_id').references(() => edges.id).notNull(),
+  /** Visitor's derived X25519 public key (from PIN + linkId) - their identity for this link */
+  visitorPublicKey: text('visitor_public_key').notNull(),
+  /** Visitor-provided display name (optional, not validated) */
+  displayName: text('display_name'),
+  /** Encrypted Double Ratchet state (encrypted with visitor's PIN-derived key)
+   * Only the visitor can decrypt this - allows session resumption */
+  encryptedRatchetState: text('encrypted_ratchet_state'),
+  /** Conversation ID for this visitor session */
+  conversationId: text('conversation_id').references(() => conversations.id),
+  /** PIN verification attempts counter (for rate limiting) */
+  failedAttempts: integer('failed_attempts').default(0).notNull(),
+  /** When last attempt was made (for rate limiting) */
+  lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+  /** When session was created */
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  /** Last activity timestamp */
+  lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  contactLinkIdx: index('visitor_sessions_contact_link_idx').on(table.contactLinkEdgeId),
+  visitorKeyIdx: uniqueIndex('visitor_sessions_visitor_key_idx').on(table.contactLinkEdgeId, table.visitorPublicKey),
+  conversationIdx: index('visitor_sessions_conversation_idx').on(table.conversationId),
+}));
+
+// ============================================
 // Type exports
 // ============================================
 
@@ -374,3 +412,6 @@ export type NewBridgeMessage = typeof bridgeMessages.$inferInsert;
 
 export type ConversationParticipant = typeof conversationParticipants.$inferSelect;
 export type NewConversationParticipant = typeof conversationParticipants.$inferInsert;
+
+export type VisitorSession = typeof visitorSessions.$inferSelect;
+export type NewVisitorSession = typeof visitorSessions.$inferInsert;
