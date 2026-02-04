@@ -46,7 +46,7 @@ export const MESSAGE_FLAGS = {
 
 // Brand colors (as decimal RGB values)
 export const BRAND_COLORS = {
-  RELAY_PRIMARY: 0x6366F1,    // Indigo - main Relay brand
+  RELAY_PRIMARY: 0x00A6F4,    // Sky blue - main Relay brand
   RELAY_SUCCESS: 0x22C55E,    // Green - for E2EE/secure
   RELAY_WARNING: 0xF59E0B,    // Amber - for warnings
   DISCORD_BLURPLE: 0x5865F2,  // Discord's blurple
