@@ -103,6 +103,7 @@ conversationRoutes.get('/', async (c) => {
           conversationId: messages.conversationId, 
           lastMessageId: sql<string>`(SELECT id FROM messages m2 WHERE m2.conversation_id = messages.conversation_id ORDER BY m2.created_at DESC LIMIT 1)`,
           lastMessageEdgeId: sql<string>`(SELECT edge_id FROM messages m2 WHERE m2.conversation_id = messages.conversation_id ORDER BY m2.created_at DESC LIMIT 1)`,
+          lastMessageSenderExternalId: sql<string | null>`(SELECT sender_external_id FROM messages m2 WHERE m2.conversation_id = messages.conversation_id ORDER BY m2.created_at DESC LIMIT 1)`,
         })
         .from(messages)
         .where(inArray(messages.conversationId, conversationIdsInPage))
@@ -111,7 +112,7 @@ conversationRoutes.get('/', async (c) => {
   
   const lastMessageInfoMap = new Map(lastMessagesByConv.map(lm => [
     lm.conversationId, 
-    { id: lm.lastMessageId, edgeId: lm.lastMessageEdgeId }
+    { id: lm.lastMessageId, edgeId: lm.lastMessageEdgeId, senderExternalId: lm.lastMessageSenderExternalId }
   ]));
 
   // Get participants and edge info for each conversation
@@ -177,8 +178,12 @@ conversationRoutes.get('/', async (c) => {
       }
       
       // Determine if last message was sent by current user
+      // For bridge messages: if senderExternalId exists, it's from external sender (not us)
+      // For native messages: check if edgeId is in our userEdgeIds
       const lastMsgInfo = lastMessageInfoMap.get(conv.id);
-      const lastMessageWasMine = lastMsgInfo?.edgeId ? userEdgeIds.includes(lastMsgInfo.edgeId) : false;
+      const lastMessageWasMine = lastMsgInfo 
+        ? (lastMsgInfo.senderExternalId ? false : (lastMsgInfo.edgeId ? userEdgeIds.includes(lastMsgInfo.edgeId) : false))
+        : false;
       
       return {
         id: conv.id,
