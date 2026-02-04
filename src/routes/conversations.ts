@@ -85,20 +85,24 @@ conversationRoutes.get('/', async (c) => {
   const items = hasMore ? results.slice(0, -1) : results;
   const nextCursor = hasMore ? items[items.length - 1].lastActivityAt.toISOString() : null;
 
-  // Get last message ID for each conversation (for preview support)
+  // Get last message info for each conversation (for preview and notification filtering)
   const conversationIdsInPage = items.map(c => c.id);
   const lastMessagesByConv = conversationIdsInPage.length > 0 
     ? await db
         .select({ 
           conversationId: messages.conversationId, 
           lastMessageId: sql<string>`(SELECT id FROM messages m2 WHERE m2.conversation_id = messages.conversation_id ORDER BY m2.created_at DESC LIMIT 1)`,
+          lastMessageEdgeId: sql<string>`(SELECT edge_id FROM messages m2 WHERE m2.conversation_id = messages.conversation_id ORDER BY m2.created_at DESC LIMIT 1)`,
         })
         .from(messages)
         .where(inArray(messages.conversationId, conversationIdsInPage))
         .groupBy(messages.conversationId)
     : [];
   
-  const lastMessageIdMap = new Map(lastMessagesByConv.map(lm => [lm.conversationId, lm.lastMessageId]));
+  const lastMessageInfoMap = new Map(lastMessagesByConv.map(lm => [
+    lm.conversationId, 
+    { id: lm.lastMessageId, edgeId: lm.lastMessageEdgeId }
+  ]));
 
   // Get participants and edge info for each conversation
   const conversationsWithDetails = await Promise.all(
@@ -148,6 +152,10 @@ conversationRoutes.get('/', async (c) => {
         }
       }
       
+      // Determine if last message was sent by current user
+      const lastMsgInfo = lastMessageInfoMap.get(conv.id);
+      const lastMessageWasMine = lastMsgInfo?.edgeId ? userEdgeIds.includes(lastMsgInfo.edgeId) : false;
+      
       return {
         id: conv.id,
         origin: conv.origin,
@@ -169,7 +177,8 @@ conversationRoutes.get('/', async (c) => {
           edgeId: counterpartyEdgeId,
           x25519PublicKey: counterpartyX25519Key,
         } : null,
-        lastMessageId: lastMessageIdMap.get(conv.id) || null,  // For preview lookup
+        lastMessageId: lastMsgInfo?.id || null,  // For preview lookup
+        lastMessageWasMine,  // For filtering sent vs received notifications
         lastActivityAt: conv.lastActivityAt.toISOString(),
         createdAt: conv.createdAt.toISOString(),
       };
