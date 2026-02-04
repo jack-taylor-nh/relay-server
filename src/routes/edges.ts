@@ -382,21 +382,34 @@ edgeRoutes.get('/', async (c) => {
     .where(eq(edges.ownerQueryKey, ownerQueryKey));
 
   return c.json({
-    edges: userEdges.map(edge => ({
-      id: edge.id,
-      type: edge.type,
-      address: edge.isNative ? edge.address : edge.address,
-      // Return encrypted label for client to decrypt
-      encryptedLabel: edge.label,
-      // Return encrypted metadata for client to decrypt
-      encryptedMetadata: (edge.metadata as any)?.encrypted || null,
-      status: edge.status,
-      securityLevel: edge.securityLevel,
-      messageCount: edge.messageCount,
-      hasX25519: !!edge.x25519PublicKey, // Client can check if migration needed
-      createdAt: edge.createdAt.toISOString(),
-      lastActivityAt: edge.lastActivityAt?.toISOString() || null,
-    })),
+    edges: userEdges.map(edge => {
+      const edgeData: any = {
+        id: edge.id,
+        type: edge.type,
+        address: edge.isNative ? edge.address : edge.address,
+        // Return encrypted label for client to decrypt
+        encryptedLabel: edge.label,
+        // Return encrypted metadata for client to decrypt
+        encryptedMetadata: (edge.metadata as any)?.encrypted || null,
+        status: edge.status,
+        securityLevel: edge.securityLevel,
+        messageCount: edge.messageCount,
+        hasX25519: !!edge.x25519PublicKey, // Client can check if migration needed
+        createdAt: edge.createdAt.toISOString(),
+        lastActivityAt: edge.lastActivityAt?.toISOString() || null,
+      };
+
+      // For webhook edges, include webhookUrl and authToken in metadata
+      if (edge.type === 'webhook' && edge.metadata) {
+        const webhookWorkerUrl = process.env.WEBHOOK_WORKER_URL || 'https://webhook.rlymsg.com';
+        edgeData.metadata = {
+          webhookUrl: `${webhookWorkerUrl}/w/${edge.id}`,
+          authToken: (edge.metadata as any).authToken || null,
+        };
+      }
+
+      return edgeData;
+    }),
   });
 });
 
