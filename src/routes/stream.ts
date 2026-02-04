@@ -36,9 +36,6 @@ streamRoutes.use('*', authMiddleware);
 streamRoutes.get('/', async (c) => {
   const identityId = c.get('fingerprint');
   
-  // Redis channel for this identity
-  const channel = `identity:${identityId}:updates`;
-  
   console.log(`[SSE] Client connected: ${identityId.slice(0, 8)}...`);
   
   return stream(c, async (stream) => {
@@ -50,9 +47,10 @@ streamRoutes.get('/', async (c) => {
     
     let keepAliveInterval: NodeJS.Timeout | null = null;
     let messageHandler: ((message: string) => void) | null = null;
+    const subscribedChannels: string[] = [];
     
     try {
-      // Subscribe to Redis pub/sub for this identity
+      // Message handler for all channels
       messageHandler = (message: string) => {
         try {
           // Parse message from Redis
@@ -66,7 +64,26 @@ streamRoutes.get('/', async (c) => {
         }
       };
       
-      await subscribe(channel, messageHandler);
+      // Subscribe to all owned edges (for both sent and received messages)
+      // This avoids identity-level operations and maintains unlinkability
+      const { computeQueryKey } = await import('../lib/queryKey.js');
+      const { db } = await import('../db/index.js');
+      const { edges } = await import('../db/schema.js');
+      const { eq } = await import('drizzle-orm');
+      
+      const ownerQueryKey = computeQueryKey(identityId);
+      const userEdges = await db
+        .select({ id: edges.id })
+        .from(edges)
+        .where(eq(edges.ownerQueryKey, ownerQueryKey));
+      
+      for (const edge of userEdges) {
+        const edgeChannel = `edge:${edge.id}:updates`;
+        await subscribe(edgeChannel, messageHandler);
+        subscribedChannels.push(edgeChannel);
+      }
+      
+      console.log(`[SSE] Subscribed to ${subscribedChannels.length} channels`);
       
       // Send initial connection confirmation
       await stream.write(`event: connected\n`);
@@ -95,8 +112,11 @@ streamRoutes.get('/', async (c) => {
         clearInterval(keepAliveInterval);
       }
       
+      // Unsubscribe from all channels
       if (messageHandler) {
-        await unsubscribe(channel, messageHandler);
+        for (const ch of subscribedChannels) {
+          await unsubscribe(ch, messageHandler);
+        }
       }
       
       console.log(`[SSE] Client disconnected: ${identityId.slice(0, 8)}...`);

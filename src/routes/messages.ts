@@ -260,8 +260,8 @@ messageRoutes.post('/', async (c) => {
     // 5. Invalidate conversation list cache and publish real-time updates
     await invalidateCache(`conversations:*`);
     
-    // Notify the sender (we have their identityId from auth context)
-    await publish(`identity:${senderIdentityId}:updates`, {
+    // Notify the sender via their edge channel (consistent with inbound)
+    await publish(`edge:${body.edge_id}:updates`, {
       type: 'conversation_update',
       payload: {
         conversationId: conversationId!,
@@ -270,9 +270,8 @@ messageRoutes.post('/', async (c) => {
       },
     });
     
-    // TODO: For full peer notification, we'd need to store identityId on edges
-    // or maintain a separate participant->identity mapping. For now, recipients
-    // will get updates via polling fallback until they send a message.
+    // Note: Using edge-based channels avoids any identity-level operations
+    // and maintains consistency with inbound message notifications
 
     // 6. For gateway_secured messages, forward to appropriate worker
     if (body.security_level === 'gateway_secured') {

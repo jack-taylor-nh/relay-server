@@ -201,9 +201,15 @@ discordRoutes.post('/inbound', workerAuthMiddleware, async (c) => {
   // Invalidate conversation cache for all users
   await invalidateCache(`conversations:*`);
   
-  // TODO: Publish SSE event to recipient
-  // Currently skipped because we can't easily reverse ownerQueryKey to identityId
-  // Recipients will get updates via polling fallback (60s)
+  // Publish SSE event to edge channel (so owner gets notified)
+  await publish(`edge:${body.edgeId}:updates`, {
+    type: 'conversation_update',
+    payload: {
+      conversationId,
+      messageId,
+      timestamp: now.toISOString(),
+    },
+  });
 
   return c.json({
     conversationId,
