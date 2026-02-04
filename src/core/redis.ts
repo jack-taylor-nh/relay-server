@@ -123,12 +123,16 @@ export async function getCached<T>(
  */
 export async function invalidateCache(pattern: string): Promise<void> {
   const redis = getRedis();
-  if (!redis) return;
+  if (!redis) {
+    console.log('[Redis] Cache invalidation skipped - Redis not available');
+    return;
+  }
 
   try {
     // If exact key (no wildcard)
     if (!pattern.includes('*')) {
       await redis.del(pattern);
+      console.log(`[Redis] Invalidated key: ${pattern}`);
       return;
     }
 
@@ -136,6 +140,9 @@ export async function invalidateCache(pattern: string): Promise<void> {
     const keys = await redis.keys(pattern);
     if (keys.length > 0) {
       await redis.del(...keys);
+      console.log(`[Redis] Invalidated ${keys.length} keys matching: ${pattern}`);
+    } else {
+      console.log(`[Redis] No keys found matching: ${pattern}`);
     }
   } catch (err) {
     console.error('[Redis] Failed to invalidate cache:', err);
