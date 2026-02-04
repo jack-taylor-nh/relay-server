@@ -253,8 +253,39 @@ export async function releaseLock(key: string, token: string): Promise<void> {
 }
 
 // =============================================================================
-// Pub/Sub (for future real-time features)
+// Pub/Sub (for real-time SSE streaming)
 // =============================================================================
+
+// Separate Redis client for pub/sub (can't use same client for commands and subscriptions)
+let subscriberClient: Redis | null = null;
+
+/**
+ * Get or create subscriber client
+ */
+function getSubscriber(): Redis | null {
+  if (!process.env.REDIS_URL || process.env.DISABLE_REDIS === 'true') {
+    return null;
+  }
+
+  if (subscriberClient) {
+    return subscriberClient;
+  }
+
+  try {
+    subscriberClient = new Redis(process.env.REDIS_URL, {
+      maxRetriesPerRequest: 3,
+    });
+
+    subscriberClient.on('error', (err) => {
+      console.error('[Redis Subscriber] Error:', err.message);
+    });
+
+    return subscriberClient;
+  } catch (err) {
+    console.error('[Redis Subscriber] Failed to create:', err);
+    return null;
+  }
+}
 
 /**
  * Publish message to channel
@@ -265,17 +296,71 @@ export async function publish(channel: string, message: any): Promise<void> {
 
   try {
     await redis.publish(channel, JSON.stringify(message));
+    console.log(`[Redis] Published to ${channel}`);
   } catch (err) {
     console.error('[Redis] Failed to publish:', err);
   }
 }
 
 /**
- * Subscribe to channel (returns subscriber instance)
- * Note: Don't use the main Redis client for subscribing - create a new one
+ * Subscribe to channel with message handler
+ * Returns unsubscribe function
  */
-export function createSubscriber(): Redis | null {
-  if (!process.env.REDIS_URL) return null;
-  
-  return new Redis(process.env.REDIS_URL);
+export async function subscribe(
+  channel: string,
+  handler: (message: string) => void
+): Promise<void> {
+  const subscriber = getSubscriber();
+  if (!subscriber) {
+    console.warn('[Redis] Pub/sub not available - SSE will not work');
+    return;
+  }
+
+  try {
+    // Register message handler
+    subscriber.on('message', (ch, message) => {
+      if (ch === channel) {
+        handler(message);
+      }
+    });
+
+    // Subscribe to channel
+    await subscriber.subscribe(channel);
+    console.log(`[Redis] Subscribed to ${channel}`);
+  } catch (err) {
+    console.error('[Redis] Failed to subscribe:', err);
+  }
+}
+
+/**
+ * Unsubscribe from channel
+ */
+export async function unsubscribe(
+  channel: string,
+  handler: (message: string) => void
+): Promise<void> {
+  const subscriber = getSubscriber();
+  if (!subscriber) return;
+
+  try {
+    // Remove handler
+    subscriber.off('message', handler as any);
+    
+    // Unsubscribe from channel
+    await subscriber.unsubscribe(channel);
+    console.log(`[Redis] Unsubscribed from ${channel}`);
+  } catch (err) {
+    console.error('[Redis] Failed to unsubscribe:', err);
+  }
+}
+
+/**
+ * Close subscriber connection
+ */
+export async function closeSubscriber(): Promise<void> {
+  if (subscriberClient) {
+    await subscriberClient.quit();
+    subscriberClient = null;
+    console.log('[Redis Subscriber] Connection closed');
+  }
 }

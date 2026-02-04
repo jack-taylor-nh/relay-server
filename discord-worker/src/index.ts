@@ -27,6 +27,7 @@ import { handleInboundDM, handleSlashCommand, handleReplyButton, handleNewConver
 import { createHttpServer } from './http/server.js';
 import { getWorkerPublicKey } from './crypto.js';
 import { CUSTOM_IDS } from './handlers/components.js';
+import { closeRedis } from './redis.js';
 
 // Environment validation
 const requiredEnvVars = [
@@ -175,16 +176,18 @@ httpServer.listen(HTTP_PORT, () => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('Received SIGTERM, shutting down...');
   client.destroy();
   httpServer.close();
+  await closeRedis();
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('Received SIGINT, shutting down...');
   client.destroy();
   httpServer.close();
+  await closeRedis();
   process.exit(0);
 });

@@ -5,6 +5,7 @@
  */
 
 import { signPayload } from './crypto.js';
+import { getCached } from './redis.js';
 
 const API_BASE_URL = process.env.API_BASE_URL || 'https://api.rlymsg.com';
 const API_SECRET = process.env.API_SECRET!;
@@ -21,49 +22,58 @@ export interface EdgeInfo {
 /**
  * Look up edge by Relay handle for Discord
  * Looks for type: 'discord' edges specifically
+ * 
+ * CACHED: Handle lookups are cached for 1 hour since they rarely change
  */
 export async function lookupEdgeByHandle(handle: string): Promise<EdgeInfo | null> {
-  try {
-    // Look up Discord-specific edge by handle
-    const response = await fetch(`${API_BASE_URL}/v1/edge/resolve`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        type: 'discord',  // Discord edges only
-        address: handle.toLowerCase(),
-      }),
-    });
-    
-    if (!response.ok) {
-      if (response.status === 404 || response.status === 410) {
-        return null;
+  const normalizedHandle = handle.toLowerCase();
+  const cacheKey = `discord:handle:${normalizedHandle}`;
+  
+  // Try cache first with 1 hour TTL (3600 seconds)
+  // Handles rarely change, so we can cache aggressively
+  return getCached(cacheKey, 3600, async () => {
+    try {
+      // Cache miss - fetch from API
+      const response = await fetch(`${API_BASE_URL}/v1/edge/resolve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'discord',  // Discord edges only
+          address: normalizedHandle,
+        }),
+      });
+      
+      if (!response.ok) {
+        if (response.status === 404 || response.status === 410) {
+          return null;
+        }
+        throw new Error(`API error: ${response.status}`);
       }
-      throw new Error(`API error: ${response.status}`);
+      
+      const data = await response.json() as {
+        edgeId: string;
+        type: string;
+        status: string;
+        securityLevel: string;
+        x25519PublicKey: string;
+        displayName?: string;
+      };
+      
+      return {
+        id: data.edgeId,
+        type: data.type,
+        status: data.status,
+        securityLevel: data.securityLevel,
+        x25519PublicKey: data.x25519PublicKey,
+        displayName: data.displayName,
+      };
+    } catch (error) {
+      console.error('Handle lookup error:', error);
+      return null;
     }
-    
-    const data = await response.json() as {
-      edgeId: string;
-      type: string;
-      status: string;
-      securityLevel: string;
-      x25519PublicKey: string;
-      displayName?: string;
-    };
-    
-    return {
-      id: data.edgeId,
-      type: data.type,
-      status: data.status,
-      securityLevel: data.securityLevel,
-      x25519PublicKey: data.x25519PublicKey,
-      displayName: data.displayName,
-    };
-  } catch (error) {
-    console.error('Handle lookup error:', error);
-    return null;
-  }
+  });
 }
 
 /**

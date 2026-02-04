@@ -17,6 +17,7 @@ import { emailRoutes } from './routes/email.js';
 import { discordRoutes } from './routes/discord.js';
 import { assetsRoutes } from './routes/assets.js';
 import { linkRoutes } from './routes/link.js';
+import { streamRoutes } from './routes/stream.js';
 
 const app = new Hono();
 
@@ -66,6 +67,7 @@ api.route('/messages', messageRoutes);
 api.route('/email', emailRoutes);
 api.route('/discord', discordRoutes);
 api.route('/link', linkRoutes);
+api.route('/stream', streamRoutes); // Real-time SSE updates
 
 app.route('/v1', api);
 

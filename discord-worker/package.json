@@ -12,6 +12,7 @@
   "dependencies": {
     "discord.js": "^14.14.1",
     "dotenv": "^16.3.1",
+    "ioredis": "^5.9.2",
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1"
   },
