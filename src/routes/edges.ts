@@ -124,6 +124,7 @@ edgeRoutes.post('/resolve', async (c) => {
         securityLevel: edges.securityLevel,
         x25519PublicKey: edges.x25519PublicKey,
         displayName: sql<string>`${edges.metadata}->>'displayName'`,
+        authToken: sql<string>`${edges.metadata}->>'authToken'`, // For webhook edges
       })
       .from(edges)
       .where(and(
@@ -157,6 +158,7 @@ edgeRoutes.post('/resolve', async (c) => {
       securityLevel: edge.securityLevel,
       x25519PublicKey: edge.x25519PublicKey,
       displayName: edge.displayName || null,
+      authToken: edge.authToken || null, // For webhook edges
     });
 
   } catch (error) {
@@ -204,6 +206,7 @@ edgeRoutes.post('/', async (c) => {
     encryptedLabel?: string;
     encryptedMetadata?: string;
     customAddress?: string; // For handles/contact links
+    authToken?: string; // For webhook edges
   }>();
 
   if (!body.type || !body.publicKey || !body.nonce || !body.signature) {
@@ -247,6 +250,9 @@ edgeRoutes.post('/', async (c) => {
   if (!identity) {
     return c.json({ code: 'IDENTITY_NOT_FOUND', message: 'Identity not registered' }, 404);
   }
+
+  // Generate edge ID first (needed for webhook address)
+  const edgeId = ulid();
 
   // Generate address and metadata based on type
   let address: string;
@@ -292,12 +298,22 @@ edgeRoutes.post('/', async (c) => {
       address = body.customAddress || generateContactLinkSlug();
       break;
 
+    case 'webhook':
+      // Webhook edges use their ID as address (for URL routing)
+      // authToken stored in metadata for verification
+      address = edgeId; // Will be set after ulid() generation
+      if (body.authToken) {
+        metadata = { authToken: body.authToken };
+      } else {
+        return c.json({ code: 'VALIDATION_ERROR', message: 'authToken required for webhook edges' }, 400);
+      }
+      break;
+
     default:
       // Future bridges
       address = body.customAddress || `${body.type}:${ulid()}`;
   }
 
-  const edgeId = ulid();
   const now = new Date();
 
   // Compute zero-knowledge query key for edge ownership

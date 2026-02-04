@@ -55,6 +55,7 @@ export type EdgeType =
   | 'contact_link'  // Public contact form
   | 'bridge'        // System bridge (email worker, discord bot, etc.)
   | 'discord'       // Discord bridge
+  | 'webhook'       // Webhook receiver
   | 'sms'           // SMS bridge
   | 'github'        // GitHub bridge
   | 'slack'         // Slack bridge

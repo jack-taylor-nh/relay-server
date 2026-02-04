@@ -1,0 +1,12 @@
+name = "relay-webhook-worker"
+main = "src/index.ts"
+compatibility_date = "2024-11-20"
+node_compat = true
+
+[vars]
+API_BASE_URL = "http://localhost:3000"
+
+# Production environment variables (set via wrangler secret put)
+# API_SECRET
+# WORKER_ENCRYPTION_PRIVATE_KEY (X25519 private key, hex format)
+# WORKER_PRIVATE_KEY (Ed25519 private key for signing, hex format)
