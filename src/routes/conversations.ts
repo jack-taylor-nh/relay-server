@@ -131,6 +131,12 @@ conversationRoutes.get('/', async (c) => {
           .where(eq(edges.id, conv.edgeId))
           .limit(1);
         edge = edgeResult || null;
+        
+        // Skip conversations where the edge is burned/inactive
+        // This prevents 404 errors when trying to fetch messages for disposed edges
+        if (edge && edge.status !== 'active') {
+          return null; // Will be filtered out below
+        }
       }
 
       // Find counterparty (participant whose edge is NOT in our userEdgeIds)
@@ -203,8 +209,11 @@ conversationRoutes.get('/', async (c) => {
     })
   );
 
+    // Filter out null entries (conversations with burned/inactive edges)
+    const activeConversations = conversationsWithDetails.filter(conv => conv !== null);
+
     return {
-      conversations: conversationsWithDetails,
+      conversations: activeConversations,
       cursor: nextCursor,
     };
   }); // End of getCached callback

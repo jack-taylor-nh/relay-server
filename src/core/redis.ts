@@ -99,9 +99,12 @@ export async function getCached<T>(
     // Try cache first
     const cached = await redis.get(key);
     if (cached) {
+      console.log(`[Redis] Cache HIT: ${key}`);
       return JSON.parse(cached) as T;
     }
 
+    console.log(`[Redis] Cache MISS: ${key}`);
+    
     // Cache miss - execute fallback
     const result = await fallback();
     
