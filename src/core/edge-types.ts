@@ -66,6 +66,16 @@ export const EDGE_TYPES: EdgeTypeDefinition[] = [
     addressValidation: /^[a-z0-9_-]{3,32}$/,  // Same format as native handles
     enabled: true,
   },
+  {
+    id: 'webhook',
+    name: 'Webhook',
+    description: 'Receive messages from external services via HTTP webhooks',
+    icon: '',
+    addressFormat: 'webhook.rlymsg.com/w/{edgeId}',
+    securityLevel: 'gateway_secured',
+    requiresCustomAddress: false,
+    enabled: true,
+  },
   // Future edge types can be added here without client changes!
 ];
 
