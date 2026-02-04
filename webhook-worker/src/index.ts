@@ -14,9 +14,11 @@
 
 import express, { Request, Response } from 'express';
 import nacl from 'tweetnacl';
-import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
+import naclUtil from 'tweetnacl-util';
 import { WebhookPayload, validatePayload, EdgeInfo } from './types.js';
 import { createHash } from 'crypto';
+
+const { encodeBase64, decodeBase64 } = naclUtil;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
