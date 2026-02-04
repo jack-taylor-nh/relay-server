@@ -159,6 +159,9 @@ app.use((req, res) => {
  */
 async function lookupEdge(edgeId: string): Promise<EdgeInfo | null> {
   try {
+    // Construct webhook address in the format expected by edge-types.ts
+    const webhookAddress = `webhook.rlymsg.com/w/${edgeId}`;
+    
     const response = await fetch(`${API_BASE_URL}/v1/edge/resolve`, {
       method: 'POST',
       headers: {
@@ -166,7 +169,7 @@ async function lookupEdge(edgeId: string): Promise<EdgeInfo | null> {
       },
       body: JSON.stringify({
         type: 'webhook',
-        address: edgeId,
+        address: webhookAddress,
       }),
     });
     
