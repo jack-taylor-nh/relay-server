@@ -125,7 +125,12 @@ conversationRoutes.get('/', async (c) => {
 
       // Find counterparty (participant whose edge is NOT in our userEdgeIds)
       const myEdgeId = myEdgeByConversation.get(conv.id) || conv.edgeId;
-      const counterpartyParticipant = parts.find(p => p.edgeId && !userEdgeIds.includes(p.edgeId));
+      // For normal conversations: counterparty has an edgeId not in our edges
+      // For contact_link: counterparty is a visitor with externalId (their public key)
+      const counterpartyParticipant = parts.find(p => 
+        (p.edgeId && !userEdgeIds.includes(p.edgeId)) || 
+        (p.externalId && !p.edgeId)  // Visitor participant
+      );
       
       // Get counterparty's edge info
       let counterpartyHandle = null;
@@ -150,6 +155,9 @@ conversationRoutes.get('/', async (c) => {
           counterpartyEdgeId = edgeResult.id;
           counterpartyX25519Key = edgeResult.x25519PublicKey;
         }
+      } else if (counterpartyParticipant?.externalId && conv.origin === 'contact_link') {
+        // For contact_link visitors, externalId IS their public key
+        counterpartyX25519Key = counterpartyParticipant.externalId;
       }
       
       // Determine if last message was sent by current user
