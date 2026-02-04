@@ -373,6 +373,9 @@ export const visitorSessions = pgTable('visitor_sessions', {
   /** Encrypted Double Ratchet state (encrypted with visitor's PIN-derived key)
    * Only the visitor can decrypt this - allows session resumption */
   encryptedRatchetState: text('encrypted_ratchet_state'),
+  /** Encrypted message history (encrypted with visitor's key)
+   * Stores decrypted messages so they can be restored on session resume */
+  encryptedMessageHistory: text('encrypted_message_history'),
   /** Conversation ID for this visitor session */
   conversationId: text('conversation_id').references(() => conversations.id),
   /** PIN verification attempts counter (for rate limiting) */

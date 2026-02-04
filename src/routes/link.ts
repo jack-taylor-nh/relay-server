@@ -156,6 +156,7 @@ linkRoutes.post('/:linkId/session', async (c) => {
       sessionId: existingSession.id,
       conversationId: existingSession.conversationId,
       encryptedRatchetState: existingSession.encryptedRatchetState,
+      encryptedMessageHistory: existingSession.encryptedMessageHistory,
       displayName: body.displayName || existingSession.displayName,
       isNew: false,
     });
@@ -263,6 +264,7 @@ linkRoutes.get('/:linkId/session/:visitorPubKey', async (c) => {
     sessionId: session.id,
     conversationId: session.conversationId,
     encryptedRatchetState: session.encryptedRatchetState,
+    encryptedMessageHistory: session.encryptedMessageHistory,
     displayName: session.displayName,
     createdAt: session.createdAt?.toISOString(),
     lastActivityAt: session.lastActivityAt?.toISOString(),
@@ -271,11 +273,12 @@ linkRoutes.get('/:linkId/session/:visitorPubKey', async (c) => {
 
 /**
  * PUT /v1/link/:linkId/session/:visitorPubKey/ratchet
- * Update encrypted ratchet state after sending/receiving messages.
+ * Update encrypted ratchet state and message history after sending/receiving messages.
  * 
  * Body:
  * {
  *   encryptedRatchetState: string,  // Encrypted with visitor's PIN-derived key
+ *   encryptedMessageHistory?: string, // Encrypted message history
  * }
  */
 linkRoutes.put('/:linkId/session/:visitorPubKey/ratchet', async (c) => {
@@ -284,6 +287,7 @@ linkRoutes.put('/:linkId/session/:visitorPubKey/ratchet', async (c) => {
   
   const body = await c.req.json<{
     encryptedRatchetState: string;
+    encryptedMessageHistory?: string;
   }>();
   
   if (!body.encryptedRatchetState) {
@@ -327,12 +331,18 @@ linkRoutes.put('/:linkId/session/:visitorPubKey/ratchet', async (c) => {
     }, 404);
   }
   
+  const updateData: { encryptedRatchetState: string; encryptedMessageHistory?: string; lastActivityAt: Date } = {
+    encryptedRatchetState: body.encryptedRatchetState,
+    lastActivityAt: new Date(),
+  };
+  
+  if (body.encryptedMessageHistory) {
+    updateData.encryptedMessageHistory = body.encryptedMessageHistory;
+  }
+  
   await db
     .update(visitorSessions)
-    .set({
-      encryptedRatchetState: body.encryptedRatchetState,
-      lastActivityAt: new Date(),
-    })
+    .set(updateData)
     .where(eq(visitorSessions.id, session.id));
   
   return c.json({ success: true });
