@@ -48,7 +48,7 @@ export const EDGE_TYPES: EdgeTypeDefinition[] = [
     id: 'contact_link',
     name: 'Contact Link',
     description: 'Share a link for E2EE conversations with anyone, no account required.',
-    icon: '🔗',
+    icon: '',
     addressFormat: 'link.rlymsg.com/{slug}',
     securityLevel: 'e2ee',
     requiresCustomAddress: false,
