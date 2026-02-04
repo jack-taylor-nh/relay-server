@@ -25,6 +25,7 @@ import {
   messages,
   type SecurityLevel 
 } from '../db/schema.js';
+import { checkRateLimit } from '../core/redis.js';
 
 export const linkRoutes = new Hono();
 
@@ -36,9 +37,22 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
  * GET /v1/link/:linkId
  * Get contact link info and prekey bundle for X3DH key exchange.
  * This is public - anyone with the link can access.
+ * 
+ * Rate limit: 60 requests per minute per IP
  */
 linkRoutes.get('/:linkId', async (c) => {
   const linkId = c.req.param('linkId');
+  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+  
+  // Rate limit: 60/min per IP (1 per second average)
+  const rateLimit = await checkRateLimit(`link:info:${ip}`, 60, 60);
+  if (!rateLimit.allowed) {
+    return c.json({
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests. Please try again later.',
+      resetAt: rateLimit.resetAt,
+    }, 429);
+  }
   
   // Find the contact link edge by its address (slug)
   const [edge] = await db
@@ -79,9 +93,22 @@ linkRoutes.get('/:linkId', async (c) => {
  *   visitorPublicKey: string,  // Derived from PIN + linkId
  *   displayName?: string,      // Optional name for the visitor
  * }
+ * 
+ * Rate limit: 10 session creations per hour per IP
  */
 linkRoutes.post('/:linkId/session', async (c) => {
   const linkId = c.req.param('linkId');
+  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+  
+  // Rate limit: 10 session creations per hour per IP
+  const rateLimit = await checkRateLimit(`link:session:${ip}:${linkId}`, 10, 3600);
+  if (!rateLimit.allowed) {
+    return c.json({
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many session attempts. Please try again later.',
+      resetAt: rateLimit.resetAt,
+    }, 429);
+  }
   
   const body = await c.req.json<{
     visitorPublicKey: string;

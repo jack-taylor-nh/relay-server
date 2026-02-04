@@ -11,6 +11,7 @@ import { db } from '../db/index.js';
 import { identities, edges, conversations, conversationParticipants, messages, type SecurityLevel, type EdgeType } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { computeQueryKey } from '../lib/queryKey.js';
+import { invalidateCache } from '../core/redis.js';
 
 export const messageRoutes = new Hono();
 
@@ -255,8 +256,36 @@ messageRoutes.post('/', async (c) => {
       .update(conversations)
       .set({ lastActivityAt: now })
       .where(eq(conversations.id, conversationId!));
+    
+    // 5. Invalidate conversation list cache for all participants
+    // This ensures they see the updated conversation immediately
+    const allParticipants = await db
+      .select({ edgeId: conversationParticipants.edgeId })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.conversationId, conversationId!));
+    
+    // Get owner identities for each edge to invalidate their cache
+    for (const part of allParticipants) {
+      if (part.edgeId) {
+        // Invalidate all cached pages for this edge's owner
+        // Pattern: conversations:*:*:* will clear all pagination variants
+        const [edge] = await db
+          .select({ ownerQueryKey: edges.ownerQueryKey })
+          .from(edges)
+          .where(eq(edges.id, part.edgeId))
+          .limit(1);
+        
+        if (edge?.ownerQueryKey) {
+          // We can't reverse ownerQueryKey to identityId (by design)
+          // So invalidate using a wildcard pattern matching any identity
+          // This is safe - worst case, we invalidate more than needed
+          await invalidateCache(`conversations:*`);
+          break; // Only need to invalidate once (same pattern for all users)
+        }
+      }
+    }
 
-    // 5. For gateway_secured messages, forward to appropriate worker
+    // 6. For gateway_secured messages, forward to appropriate worker
     if (body.security_level === 'gateway_secured') {
       if (body.origin === 'email') {
         try {
