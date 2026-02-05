@@ -92,17 +92,7 @@ app.post('/w/:edgeId', async (req, res) => {
       });
     }
     
-    // 2. Validate payload
-    const validation = validatePayload(req.body);
-    if (!validation.valid) {
-      return res.status(400).json({ 
-        error: validation.error 
-      });
-    }
-    
-    const webhookData = validation.data!;
-    
-    // 3. Lookup edge from API (verify it exists and get X25519 key)
+    // 2. Lookup edge from API first (to get default sender name for validation)
     const edgeInfo = await lookupEdge(edgeId);
     if (!edgeInfo) {
       return res.status(404).json({ 
@@ -116,12 +106,29 @@ app.post('/w/:edgeId', async (req, res) => {
       });
     }
     
-    // 4. Verify auth token matches edge's stored token
+    // 3. Verify auth token matches edge's stored token
     if (edgeInfo.authToken !== authToken) {
       return res.status(401).json({ 
         error: 'Invalid authentication token' 
       });
     }
+    
+    // 4. Validate and normalize payload (pass headers for service detection)
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (typeof value === 'string') {
+        headers[key.toLowerCase()] = value;
+      }
+    }
+    
+    const validation = validatePayload(req.body, headers, edgeInfo.defaultSenderName);
+    if (!validation.valid) {
+      return res.status(400).json({ 
+        error: validation.error 
+      });
+    }
+    
+    const webhookData = validation.data!;
     
     // 5. Hash sender for privacy (deterministic for conversation matching)
     const senderHash = hashSender(webhookData.sender, edgeId);
@@ -137,7 +144,8 @@ app.post('/w/:edgeId', async (req, res) => {
     
     res.json({ 
       success: true,
-      message: 'Webhook received and forwarded' 
+      message: 'Webhook received and forwarded',
+      detectedService: webhookData.detectedService,
     });
     
   } catch (error) {
