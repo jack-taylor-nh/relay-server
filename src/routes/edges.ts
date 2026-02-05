@@ -120,6 +120,18 @@ edgeRoutes.post('/resolve', async (c) => {
       }, 404);
     }
 
+    // For webhook edges, extract edge ID from the full URL format
+    // Input format: "webhook.rlymsg.com/w/{edgeId}" -> extract just the edgeId
+    // The database stores just the edgeId as the address
+    let lookupAddress = address;
+    if (type === 'webhook') {
+      const webhookMatch = address.match(/^(?:https?:\/\/)?webhook\.rlymsg\.com\/w\/([a-z0-9]+)$/i);
+      if (webhookMatch) {
+        lookupAddress = webhookMatch[1].toUpperCase(); // ULIDs are uppercase
+        console.log('[/edge/resolve] Extracted webhook edge ID:', lookupAddress);
+      }
+    }
+
     // Query edge by type and address
     const result = await db
       .select({
@@ -134,7 +146,7 @@ edgeRoutes.post('/resolve', async (c) => {
       })
       .from(edges)
       .where(and(
-        eq(edges.address, address),
+        eq(edges.address, lookupAddress),
         eq(edges.type, type),
         eq(edges.status, 'active')
       ))
@@ -143,7 +155,7 @@ edgeRoutes.post('/resolve', async (c) => {
     if (result.length === 0) {
       return c.json({ 
         code: 'EDGE_NOT_FOUND', 
-        message: `${type} edge not found: ${address}` 
+        message: `${type} edge not found: ${lookupAddress}` 
       }, 404);
     }
 
