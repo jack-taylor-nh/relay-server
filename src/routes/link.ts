@@ -236,6 +236,19 @@ linkRoutes.post('/:linkId/session', async (c) => {
     lastActivityAt: now,
   });
   
+  // Invalidate conversation cache so relay user sees new conversation
+  await invalidateCache(`conversations:*`);
+  
+  // Notify relay user via SSE about new conversation
+  await publish(`edge:${edge.id}:updates`, {
+    type: 'conversation_update',
+    payload: {
+      conversationId,
+      messageId: null,
+      timestamp: now.toISOString(),
+    },
+  });
+  
   return c.json({
     sessionId,
     conversationId,
@@ -503,17 +516,6 @@ linkRoutes.post('/:linkId/messages', async (c) => {
   
   // Publish to Redis for SSE updates
   // Use edge channel so relay user's extension receives real-time notification
-  const publishTimestamp = new Date().toISOString();
-  console.log(`[${publishTimestamp}] [LINK-SERVER] Publishing to Redis channel: edge:${session.contactLinkEdgeId}:updates`);
-  console.log(`[${publishTimestamp}] [LINK-SERVER] Event payload:`, JSON.stringify({
-    type: 'conversation_update',
-    payload: {
-      conversationId: session.conversationId,
-      messageId,
-      timestamp: now.toISOString(),
-    },
-  }));
-  
   await publish(`edge:${session.contactLinkEdgeId}:updates`, {
     type: 'conversation_update',
     payload: {
@@ -522,8 +524,6 @@ linkRoutes.post('/:linkId/messages', async (c) => {
       timestamp: now.toISOString(),
     },
   });
-  
-  console.log(`[${new Date().toISOString()}] [LINK-SERVER] Redis publish completed`);
   
   return c.json({
     messageId,
