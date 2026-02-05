@@ -768,8 +768,8 @@ linkRoutes.get('/:linkId/stream/:visitorPubKey', async (c) => {
       await subscribe(channel, messageHandler);
       console.log(`[Link SSE] Subscribed to ${channel}`);
       
-      // Wait for client disconnect
-      await stream.sleep(Number.MAX_SAFE_INTEGER);
+      // Keep connection open - stream will naturally close when client disconnects
+      await stream.sleep(Infinity);
       
     } catch (error) {
       console.log(`[Link SSE] Connection closed for ${linkId}:`, error);
