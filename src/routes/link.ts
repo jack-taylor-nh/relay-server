@@ -26,7 +26,7 @@ import {
   messages,
   type SecurityLevel 
 } from '../db/schema.js';
-import { checkRateLimit, publish, subscribe, unsubscribe } from '../core/redis.js';
+import { checkRateLimit, publish, subscribe, unsubscribe, invalidateCache } from '../core/redis.js';
 
 export const linkRoutes = new Hono();
 
@@ -497,6 +497,9 @@ linkRoutes.post('/:linkId/messages', async (c) => {
     .update(visitorSessions)
     .set(sessionUpdate)
     .where(eq(visitorSessions.id, session.id));
+  
+  // Invalidate conversation cache so relay user's poll returns fresh data
+  await invalidateCache(`conversations:*`);
   
   // Publish to Redis for SSE updates
   // Use edge channel so relay user's extension receives real-time notification
