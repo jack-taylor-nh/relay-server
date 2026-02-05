@@ -20,7 +20,8 @@ export const webhookRoutes = new Hono();
 
 // Simple worker auth - shared secret
 const WORKER_SECRET = process.env.WORKER_SECRET || 'dev-worker-secret';
-const WORKER_PUBLIC_KEY = process.env.WORKER_PUBLIC_KEY; // Ed25519 public key (hex) for signature verification
+// Use dedicated webhook worker public key, fallback to generic WORKER_PUBLIC_KEY for backwards compatibility
+const WEBHOOK_WORKER_PUBLIC_KEY = process.env.WEBHOOK_WORKER_PUBLIC_KEY || process.env.WORKER_PUBLIC_KEY;
 
 /**
  * Middleware to verify worker auth
@@ -39,11 +40,18 @@ async function workerAuthMiddleware(c: any, next: any) {
   
   // Verify signature if provided (optional for backwards compatibility)
   const signature = c.req.header('X-Worker-Signature');
-  if (signature && WORKER_PUBLIC_KEY) {
+  if (signature && WEBHOOK_WORKER_PUBLIC_KEY) {
     const body = await c.req.text();
     const messageToSign = body; // Sign the raw request body
     
-    const isValid = verifySignature(messageToSign, signature, WORKER_PUBLIC_KEY);
+    console.log('[webhook/inbound] Verifying signature...');
+    console.log('[webhook/inbound] Body length:', body.length);
+    console.log('[webhook/inbound] Signature:', signature.substring(0, 20) + '...');
+    console.log('[webhook/inbound] Public key:', WEBHOOK_WORKER_PUBLIC_KEY.substring(0, 20) + '...');
+    
+    const isValid = verifySignature(messageToSign, signature, WEBHOOK_WORKER_PUBLIC_KEY);
+    
+    console.log('[webhook/inbound] Signature valid:', isValid);
     
     if (!isValid) {
       return c.json({ code: 'INVALID_SIGNATURE', message: 'Worker signature verification failed' }, 401);
