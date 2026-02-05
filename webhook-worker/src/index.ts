@@ -295,11 +295,20 @@ async function forwardToApi(
 
 /**
  * Sign payload with Ed25519 key
+ * Handles both 32-byte seeds and 64-byte full secret keys
  */
 function signPayload(message: string, privateKeyHex: string): string {
   const messageBytes = new TextEncoder().encode(message);
-  const privateKeyBytes = hexToBytes(privateKeyHex);
-  const signature = nacl.sign.detached(messageBytes, privateKeyBytes);
+  let secretKey = hexToBytes(privateKeyHex);
+  
+  // TweetNaCl expects a 64-byte secret key (seed + public key)
+  // If we only have a 32-byte seed, derive the full keypair
+  if (secretKey.length === 32) {
+    const keypair = nacl.sign.keyPair.fromSeed(secretKey);
+    secretKey = keypair.secretKey; // Now 64 bytes
+  }
+  
+  const signature = nacl.sign.detached(messageBytes, secretKey);
   return encodeBase64(signature);
 }
 
