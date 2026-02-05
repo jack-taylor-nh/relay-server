@@ -498,8 +498,9 @@ linkRoutes.post('/:linkId/messages', async (c) => {
     .set(sessionUpdate)
     .where(eq(visitorSessions.id, session.id));
   
-  // Publish to Redis for SSE updates (extension side)
-  await publish(`conversation:${session.conversationId}`, {
+  // Publish to Redis for SSE updates
+  // Use edge channel so relay user's extension receives real-time notification
+  await publish(`edge:${session.contactLinkEdgeId}:updates`, {
     type: 'new_message',
     conversationId: session.conversationId,
     messageId,

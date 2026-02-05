@@ -270,6 +270,15 @@ messageRoutes.post('/', async (c) => {
       },
     });
     
+    // For contact_link conversations, also publish to conversation channel for visitor
+    if (conversation.origin === 'contact_link') {
+      await publish(`conversation:${conversationId}`, {
+        type: 'new_message',
+        conversationId: conversationId!,
+        messageId,
+      });
+    }
+    
     // Note: Using edge-based channels avoids any identity-level operations
     // and maintains consistency with inbound message notifications
 
