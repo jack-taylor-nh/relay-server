@@ -769,8 +769,12 @@ linkRoutes.get('/:linkId/stream/:visitorPubKey', async (c) => {
       console.log(`[Link SSE] Subscribed to ${channel}`);
       
       // Keep connection open until client disconnects
-      // Wait for the stream to be aborted (client disconnect)
-      await stream.sleep(2147483647); // Max 32-bit signed int (~24.8 days)
+      await new Promise<void>((resolve) => {
+        c.req.raw.signal.addEventListener('abort', () => {
+          console.log(`[Link SSE] Client aborted connection for ${linkId}`);
+          resolve();
+        });
+      });
       
     } catch (error) {
       console.log(`[Link SSE] Connection closed for ${linkId}:`, error);
