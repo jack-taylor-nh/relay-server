@@ -101,6 +101,7 @@ messageRoutes.post('/', async (c) => {
     let conversationId = body.conversation_id;
     let recipientEdgeId: string | null = null;
     let isNewConversation = false;
+    let conversationOrigin: string | null = null;
 
     // 2. Handle conversation - either find existing or create new
     if (conversationId) {
@@ -114,6 +115,8 @@ messageRoutes.post('/', async (c) => {
       if (!conversation) {
         return c.json({ error: 'Conversation not found' }, 404);
       }
+      
+      conversationOrigin = conversation.origin;
 
       // SECURITY: Verify participation via edge ID only (no identity fallback)
       const participation = await db
@@ -271,7 +274,7 @@ messageRoutes.post('/', async (c) => {
     });
     
     // For contact_link conversations, also publish to conversation channel for visitor
-    if (conversation.origin === 'contact_link') {
+    if (conversationOrigin === 'contact_link') {
       await publish(`conversation:${conversationId}`, {
         type: 'new_message',
         conversationId: conversationId!,
