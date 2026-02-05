@@ -53,14 +53,22 @@ streamRoutes.get('/', async (c) => {
       // Message handler for all channels
       messageHandler = (message: string) => {
         try {
+          const receiveTimestamp = new Date().toISOString();
+          console.log(`[${receiveTimestamp}] [SSE-SERVER] Received Redis message:`, message.substring(0, 200));
+          
           // Parse message from Redis
           const data = JSON.parse(message);
+          console.log(`[${new Date().toISOString()}] [SSE-SERVER] Parsed message type: ${data.type}`);
+          console.log(`[${new Date().toISOString()}] [SSE-SERVER] Payload:`, JSON.stringify(data.payload));
           
           // Send SSE event to client
+          const writeTimestamp = new Date().toISOString();
+          console.log(`[${writeTimestamp}] [SSE-SERVER] Writing event to stream...`);
           stream.write(`event: ${data.type}\n`);
           stream.write(`data: ${JSON.stringify(data.payload)}\n\n`);
+          console.log(`[${new Date().toISOString()}] [SSE-SERVER] Event written successfully`);
         } catch (error) {
-          console.error('[SSE] Failed to parse message:', error);
+          console.error(`[${new Date().toISOString()}] [SSE-SERVER] Failed to parse message:`, error);
         }
       };
       
