@@ -268,6 +268,8 @@ export async function releaseLock(key: string, token: string): Promise<void> {
 
 // Separate Redis client for pub/sub (can't use same client for commands and subscriptions)
 let subscriberClient: Redis | null = null;
+// Track channel -> Set of handlers for proper cleanup
+const channelHandlers = new Map<string, Set<(message: string) => void>>();
 
 /**
  * Get or create subscriber client
@@ -284,6 +286,14 @@ function getSubscriber(): Redis | null {
   try {
     subscriberClient = new Redis(process.env.REDIS_URL, {
       maxRetriesPerRequest: 3,
+    });
+
+    // Single message handler dispatches to all registered handlers
+    subscriberClient.on('message', (channel, message) => {
+      const handlers = channelHandlers.get(channel);
+      if (handlers) {
+        handlers.forEach(handler => handler(message));
+      }
     });
 
     subscriberClient.on('error', (err) => {
@@ -314,7 +324,6 @@ export async function publish(channel: string, message: any): Promise<void> {
 
 /**
  * Subscribe to channel with message handler
- * Returns unsubscribe function
  */
 export async function subscribe(
   channel: string,
@@ -327,16 +336,16 @@ export async function subscribe(
   }
 
   try {
-    // Register message handler
-    subscriber.on('message', (ch, message) => {
-      if (ch === channel) {
-        handler(message);
-      }
-    });
-
-    // Subscribe to channel
-    await subscriber.subscribe(channel);
-    console.log(`[Redis] Subscribed to ${channel}`);
+    // Add handler to channel's handler set
+    if (!channelHandlers.has(channel)) {
+      channelHandlers.set(channel, new Set());
+      // Only subscribe to Redis channel if this is the first handler
+      await subscriber.subscribe(channel);
+      console.log(`[Redis] Subscribed to ${channel}`);
+    }
+    
+    channelHandlers.get(channel)!.add(handler);
+    console.log(`[Redis] Added handler for ${channel} (${channelHandlers.get(channel)!.size} total)`);
   } catch (err) {
     console.error('[Redis] Failed to subscribe:', err);
   }
@@ -353,12 +362,19 @@ export async function unsubscribe(
   if (!subscriber) return;
 
   try {
-    // Remove handler
-    subscriber.off('message', handler as any);
-    
-    // Unsubscribe from channel
-    await subscriber.unsubscribe(channel);
-    console.log(`[Redis] Unsubscribed from ${channel}`);
+    const handlers = channelHandlers.get(channel);
+    if (!handlers) return;
+
+    // Remove this specific handler
+    handlers.delete(handler);
+    console.log(`[Redis] Removed handler for ${channel} (${handlers.size} remaining)`);
+
+    // If no more handlers for this channel, unsubscribe from Redis
+    if (handlers.size === 0) {
+      channelHandlers.delete(channel);
+      await subscriber.unsubscribe(channel);
+      console.log(`[Redis] Unsubscribed from ${channel}`);
+    }
   } catch (err) {
     console.error('[Redis] Failed to unsubscribe:', err);
   }
