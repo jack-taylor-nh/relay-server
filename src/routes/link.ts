@@ -501,9 +501,12 @@ linkRoutes.post('/:linkId/messages', async (c) => {
   // Publish to Redis for SSE updates
   // Use edge channel so relay user's extension receives real-time notification
   await publish(`edge:${session.contactLinkEdgeId}:updates`, {
-    type: 'new_message',
-    conversationId: session.conversationId,
-    messageId,
+    type: 'conversation_update',
+    payload: {
+      conversationId: session.conversationId,
+      messageId,
+      timestamp: now.toISOString(),
+    },
   });
   
   return c.json({
