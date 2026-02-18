@@ -76,6 +76,16 @@ export const EDGE_TYPES: EdgeTypeDefinition[] = [
     requiresCustomAddress: false,
     enabled: true,
   },
+  {
+    id: 'local-llm',
+    name: 'Local LLM',
+    description: 'Connect to your local LLM (Ollama, LM Studio) via Relay bridge app',
+    icon: '',
+    addressFormat: 'llm-{edgeId}',
+    securityLevel: 'gateway_secured',
+    requiresCustomAddress: false,
+    enabled: true,
+  },
   // Future edge types can be added here without client changes!
 ];
 

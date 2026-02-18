@@ -327,6 +327,13 @@ edgeRoutes.post('/', async (c) => {
       }
       break;
 
+    case 'local-llm':
+      // Local LLM edges use edge ID as address (similar to webhooks)
+      // Desktop bridge app polls using this edge ID
+      address = edgeId;
+      metadata = body.encryptedMetadata ? { encrypted: body.encryptedMetadata } : {};
+      break;
+
     default:
       // Future bridges
       address = body.customAddress || `${body.type}:${ulid()}`;

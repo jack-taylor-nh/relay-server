@@ -56,6 +56,7 @@ export type EdgeType =
   | 'bridge'        // System bridge (email worker, discord bot, etc.)
   | 'discord'       // Discord bridge
   | 'webhook'       // Webhook receiver
+  | 'local-llm'     // Local LLM bridge edge
   | 'sms'           // SMS bridge
   | 'github'        // GitHub bridge
   | 'slack'         // Slack bridge
