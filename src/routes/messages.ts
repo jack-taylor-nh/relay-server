@@ -27,9 +27,10 @@ messageRoutes.use('*', authMiddleware);
  * 
  * Request body:
  * {
- *   // Either conversation_id (existing) or recipient_handle (new native conversation)
+ *   // Either conversation_id (existing), recipient_handle (new native), or recipient_edge_id (new non-native)
  *   conversation_id?: string,
  *   recipient_handle?: string,  // For new native conversations
+ *   recipient_edge_id?: string, // For new non-native conversations (webhook, discord, etc.)
  *   
  *   edge_id: string,            // Sender's edge
  *   origin: "native" | "email" | etc,
@@ -51,6 +52,7 @@ messageRoutes.post('/', async (c) => {
   const body = await c.req.json<{
     conversation_id?: string;
     recipient_handle?: string;
+    recipient_edge_id?: string;
     edge_id: string;
     origin: string;
     security_level: SecurityLevel;
@@ -74,10 +76,10 @@ messageRoutes.post('/', async (c) => {
     }, 400);
   }
 
-  // Must have either conversation_id or recipient_handle
-  if (!body.conversation_id && !body.recipient_handle) {
+  // Must have either conversation_id, recipient_handle, or recipient_edge_id
+  if (!body.conversation_id && !body.recipient_handle && !body.recipient_edge_id) {
     return c.json({ 
-      error: 'Must provide either conversation_id (existing) or recipient_handle (new conversation)' 
+      error: 'Must provide either conversation_id (existing), recipient_handle (new native), or recipient_edge_id (new non-native)' 
     }, 400);
   }
 
@@ -221,6 +223,82 @@ messageRoutes.post('/', async (c) => {
             conversationId,
             // SECURITY: Do NOT store identityId - breaks unlinkability
             edgeId: recipientEdgeId ?? undefined,
+            isOwner: false,
+            joinedAt: now,
+          },
+        ]);
+      }
+    } else if (body.recipient_edge_id) {
+      // New non-native conversation - use recipient_edge_id directly
+      recipientEdgeId = body.recipient_edge_id;
+
+      // Verify recipient edge exists
+      const [recipientEdge] = await db
+        .select({ id: edges.id })
+        .from(edges)
+        .where(and(
+          eq(edges.id, body.recipient_edge_id),
+          eq(edges.status, 'active')
+        ))
+        .limit(1);
+
+      if (!recipientEdge) {
+        return c.json({ error: 'Recipient edge not found' }, 404);
+      }
+
+      // Check for existing conversation between these two edges
+      let existingConversationId: string | undefined = undefined;
+      
+      const senderEdgeConversations = await db
+        .select({ conversationId: conversationParticipants.conversationId })
+        .from(conversationParticipants)
+        .where(eq(conversationParticipants.edgeId, body.edge_id));
+
+      for (const conv of senderEdgeConversations) {
+        const [recipientParticipation] = await db
+          .select()
+          .from(conversationParticipants)
+          .where(and(
+            eq(conversationParticipants.conversationId, conv.conversationId),
+            eq(conversationParticipants.edgeId, recipientEdgeId)
+          ))
+          .limit(1);
+
+        if (recipientParticipation) {
+          existingConversationId = conv.conversationId;
+          break;
+        }
+      }
+      
+      conversationId = existingConversationId;
+
+      // Create new conversation if none exists
+      if (!conversationId) {
+        conversationId = ulid();
+        const now = new Date();
+        isNewConversation = true;
+        conversationOrigin = body.origin;
+
+        await db.insert(conversations).values({
+          id: conversationId,
+          edgeId: body.edge_id,
+          origin: body.origin as EdgeType,
+          securityLevel: body.security_level,
+          lastActivityAt: now,
+          createdAt: now,
+        });
+
+        // Add both participants with edge IDs only
+        await db.insert(conversationParticipants).values([
+          {
+            conversationId,
+            edgeId: body.edge_id,
+            isOwner: true,
+            joinedAt: now,
+          },
+          {
+            conversationId,
+            edgeId: recipientEdgeId,
             isOwner: false,
             joinedAt: now,
           },
