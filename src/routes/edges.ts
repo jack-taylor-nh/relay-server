@@ -328,20 +328,27 @@ edgeRoutes.post('/', async (c) => {
       break;
 
     case 'local-llm':
-      // Local LLM edges store the bridge's edge ID as the address
-      // This is the edge ID of the desktop bridge app (passed as customAddress)
-      // The client uses this to resolve the bridge's X25519 public key
+      // Local LLM edges store BOTH the bridge edge ID AND their own ID in the address
+      // Format: {bridgeEdgeId}:{localEdgeId}
+      // This allows multiple local-llm edges to point to the same bridge
+      // while maintaining unique addresses (required by database constraint)
       console.log('[POST /edge] local-llm edge creation:', {
         hasCustomAddress: !!body.customAddress,
         customAddress: body.customAddress?.substring(0, 10),
+        edgeId: edgeId.substring(0, 10),
       });
       if (!body.customAddress) {
         console.log('[POST /edge] ❌ Missing customAddress for local-llm edge');
         return c.json({ code: 'VALIDATION_ERROR', message: 'Bridge edge ID required for local-llm edges' }, 400);
       }
-      address = body.customAddress; // Store the bridge's edge ID
-      console.log('[POST /edge] ✅ local-llm edge address set to:', address.substring(0, 10));
-      metadata = body.encryptedMetadata ? { encrypted: body.encryptedMetadata } : {};
+      // Store as: bridgeEdgeId:localEdgeId
+      address = `${body.customAddress}:${edgeId}`;
+      console.log('[POST /edge] ✅ local-llm edge address set to:', address.substring(0, 30) + '...');
+      // Store bridge edge ID in metadata for easy lookup
+      metadata = {
+        bridgeEdgeId: body.customAddress,
+        ...(body.encryptedMetadata ? { encrypted: body.encryptedMetadata } : {}),
+      };
       break;
 
     default:
