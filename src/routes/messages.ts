@@ -43,8 +43,62 @@ export const messageRoutes = new Hono();
  *   signature: string
  * }
  */
-messageRoutes.post('/', authMiddleware, async (c) => {
-  const senderIdentityId = c.get('identityId') as string;
+messageRoutes.post('/', async (c) => {
+  // Dual authentication: X25519 edge auth OR JWT
+  const authHeader = c.req.header('Authorization');
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ code: 'UNAUTHORIZED', message: 'Missing or invalid authorization header' }, 401);
+  }
+  
+  const token = authHeader.slice(7);
+  let senderIdentityId: string | null = null;
+  
+  // Try X25519 edge authentication first (for bridge apps)
+  try {
+    const { fromBase64, toBase64 } = await import('../core/crypto/index.js');
+    const nacl = (await import('tweetnacl')).default;
+    
+    const secretKey = fromBase64(token);
+    const derivedKeyPair = nacl.box.keyPair.fromSecretKey(secretKey);
+    const derivedPublicKeyBase64 = toBase64(derivedKeyPair.publicKey);
+    
+    // Look up edge by X25519 public key
+    const [edge] = await db
+      .select({ ownerQueryKey: edges.ownerQueryKey, status: edges.status })
+      .from(edges)
+      .where(eq(edges.x25519PublicKey, derivedPublicKeyBase64))
+      .limit(1);
+      
+    if (edge && edge.status === 'active') {
+      // Use ownerQueryKey as identity for edge-authenticated requests
+      senderIdentityId = edge.ownerQueryKey;
+      console.log(`[Messages POST] Edge authenticated via X25519`);
+    }
+  } catch (edgeAuthError) {
+    // Not a valid X25519 key, will try JWT
+  }
+  
+  // Fallback to JWT authentication (for extension clients)
+  if (!senderIdentityId) {
+    try {
+      const { verifySessionToken } = await import('../lib/jwt.js');
+      const payload = await verifySessionToken(token);
+      
+      if (!payload) {
+        return c.json({ code: 'UNAUTHORIZED', message: 'Invalid authentication token' }, 401);
+      }
+      
+      senderIdentityId = payload.fingerprint;
+      console.log(`[Messages POST] JWT authenticated:`, senderIdentityId?.slice(0, 8));
+    } catch (jwtError) {
+      return c.json({ code: 'UNAUTHORIZED', message: 'Invalid authentication token' }, 401);
+    }
+  }
+  
+  if (!senderIdentityId) {
+    return c.json({ code: 'UNAUTHORIZED', message: 'Authentication required' }, 401);
+  }
   
   const body = await c.req.json<{
     conversation_id?: string;
