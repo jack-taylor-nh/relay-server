@@ -15,9 +15,6 @@ import { invalidateCache, publish } from '../core/redis.js';
 
 export const messageRoutes = new Hono();
 
-// All message routes require authentication
-messageRoutes.use('*', authMiddleware);
-
 /**
  * POST /v1/messages
  * Unified message sending endpoint for all conversation types (native, email, Discord, etc.)
@@ -46,7 +43,7 @@ messageRoutes.use('*', authMiddleware);
  *   signature: string
  * }
  */
-messageRoutes.post('/', async (c) => {
+messageRoutes.post('/', authMiddleware, async (c) => {
   const senderIdentityId = c.get('identityId') as string;
   
   const body = await c.req.json<{
