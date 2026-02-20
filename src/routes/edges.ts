@@ -328,9 +328,13 @@ edgeRoutes.post('/', async (c) => {
       break;
 
     case 'local-llm':
-      // Local LLM edges use edge ID as address (similar to webhooks)
-      // Desktop bridge app polls using this edge ID
-      address = edgeId;
+      // Local LLM edges store the bridge's edge ID as the address
+      // This is the edge ID of the desktop bridge app (passed as customAddress)
+      // The client uses this to resolve the bridge's X25519 public key
+      if (!body.customAddress) {
+        return c.json({ code: 'VALIDATION_ERROR', message: 'Bridge edge ID required for local-llm edges' }, 400);
+      }
+      address = body.customAddress; // Store the bridge's edge ID
       metadata = body.encryptedMetadata ? { encrypted: body.encryptedMetadata } : {};
       break;
 
