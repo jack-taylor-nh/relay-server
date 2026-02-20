@@ -351,6 +351,20 @@ messageRoutes.post('/', async (c) => {
       },
     });
     
+    // 🎯 CRITICAL: Notify the recipient via their edge channel
+    // This is what allows bridges (desktop app, etc.) to receive messages
+    if (recipientEdgeId) {
+      console.log(`[Messages] Publishing to recipient edge channel: edge:${recipientEdgeId}:updates`);
+      await publish(`edge:${recipientEdgeId}:updates`, {
+        type: 'edge.message',
+        payload: {
+          conversationId: conversationId!,
+          messageId,
+          timestamp: now.toISOString(),
+        },
+      });
+    }
+    
     // For contact_link conversations, also publish to conversation channel for visitor
     if (conversationOrigin === 'contact_link') {
       await publish(`conversation:${conversationId}`, {
