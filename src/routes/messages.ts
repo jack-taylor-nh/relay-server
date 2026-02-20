@@ -53,6 +53,8 @@ messageRoutes.post('/', async (c) => {
   
   const token = authHeader.slice(7);
   let senderIdentityId: string | null = null;
+  let authenticatedEdge: typeof edges.$inferSelect | null = null;
+  let authMethod: 'x25519' | 'jwt' | null = null;
   
   // Try X25519 edge authentication first (for bridge apps)
   try {
@@ -63,17 +65,18 @@ messageRoutes.post('/', async (c) => {
     const derivedKeyPair = nacl.box.keyPair.fromSecretKey(secretKey);
     const derivedPublicKeyBase64 = toBase64(derivedKeyPair.publicKey);
     
-    // Look up edge by X25519 public key
+    // Look up edge by X25519 public key (get full edge record)
     const [edge] = await db
-      .select({ ownerQueryKey: edges.ownerQueryKey, status: edges.status })
+      .select()
       .from(edges)
       .where(eq(edges.x25519PublicKey, derivedPublicKeyBase64))
       .limit(1);
       
     if (edge && edge.status === 'active') {
-      // Use ownerQueryKey as identity for edge-authenticated requests
+      authenticatedEdge = edge;
       senderIdentityId = edge.ownerQueryKey;
-      console.log(`[Messages POST] Edge authenticated via X25519`);
+      authMethod = 'x25519';
+      console.log(`[Messages POST] Edge authenticated via X25519:`, edge.id);
     }
   } catch (edgeAuthError) {
     // Not a valid X25519 key, will try JWT
@@ -90,13 +93,14 @@ messageRoutes.post('/', async (c) => {
       }
       
       senderIdentityId = payload.fingerprint;
+      authMethod = 'jwt';
       console.log(`[Messages POST] JWT authenticated:`, senderIdentityId?.slice(0, 8));
     } catch (jwtError) {
       return c.json({ code: 'UNAUTHORIZED', message: 'Invalid authentication token' }, 401);
     }
   }
   
-  if (!senderIdentityId) {
+  if (!senderIdentityId || !authMethod) {
     return c.json({ code: 'UNAUTHORIZED', message: 'Authentication required' }, 401);
   }
   
@@ -135,20 +139,38 @@ messageRoutes.post('/', async (c) => {
   }
 
   try {
-    // 1. Verify sender owns the edge via ownerQueryKey (not identity_id)
-    const senderQueryKey = computeQueryKey(senderIdentityId);
+    // 1. Verify sender owns the edge
+    let senderEdge: typeof edges.$inferSelect;
     
-    const [senderEdge] = await db
-      .select()
-      .from(edges)
-      .where(and(
-        eq(edges.id, body.edge_id),
-        eq(edges.ownerQueryKey, senderQueryKey)
-      ))
-      .limit(1);
+    if (authMethod === 'x25519' && authenticatedEdge) {
+      // For X25519 auth, we already have the authenticated edge
+      // Just verify it matches the claimed edge_id
+      if (authenticatedEdge.id !== body.edge_id) {
+        return c.json({ 
+          error: 'Edge ID mismatch: authenticated edge does not match claimed edge_id' 
+        }, 403);
+      }
+      senderEdge = authenticatedEdge;
+      console.log(`[Messages POST] Using X25519 authenticated edge:`, senderEdge.id);
+    } else {
+      // For JWT auth, query the edge by ID and verify ownership via ownerQueryKey
+      const senderQueryKey = computeQueryKey(senderIdentityId);
+      
+      const [edge] = await db
+        .select()
+        .from(edges)
+        .where(and(
+          eq(edges.id, body.edge_id),
+          eq(edges.ownerQueryKey, senderQueryKey)
+        ))
+        .limit(1);
 
-    if (!senderEdge) {
-      return c.json({ error: 'Edge not found or not owned by sender' }, 403);
+      if (!edge) {
+        return c.json({ error: 'Edge not found or not owned by sender' }, 403);
+      }
+      
+      senderEdge = edge;
+      console.log(`[Messages POST] JWT edge verified:`, senderEdge.id);
     }
 
     let conversationId = body.conversation_id;
