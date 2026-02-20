@@ -5,7 +5,7 @@
  */
 
 import { Hono } from 'hono';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { db } from '../db/index.js';
 import { identities, edges, conversations, conversationParticipants, messages, type SecurityLevel, type EdgeType } from '../db/schema.js';
@@ -436,6 +436,167 @@ messageRoutes.post('/', async (c) => {
     console.error('Error sending message:', error);
     return c.json({ error: 'Failed to send message', details: error.message }, 500);
   }
+});
+
+/**
+ * GET /v1/messages/:messageId - Fetch a specific message by ID
+ * 
+ * Supports edge-based authentication (X25519 Bearer token) for bridge apps
+ * or JWT authentication for extension clients.
+ * 
+ * Returns the full message including encrypted content.
+ */
+messageRoutes.get('/:messageId', async (c) => {
+  const messageId = c.req.param('messageId');
+  const authHeader = c.req.header('Authorization');
+  
+  console.log(`[Messages GET] Request for message: ${messageId}`);
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.log('[Messages GET] Missing or invalid auth header');
+    return c.json({ code: 'UNAUTHORIZED', message: 'Missing or invalid authorization header' }, 401);
+  }
+  
+  const token = authHeader.slice(7);
+  console.log(`[Messages GET] Token length: ${token.length}, starts with: ${token.substring(0, 20)}...`);
+  
+  let authenticatedEdgeId: string | null = null;
+  let authenticatedIdentityId: string | null = null;
+  
+  // Try X25519 edge authentication first (for bridge apps)
+  try {
+    const { fromBase64, toBase64 } = await import('../core/crypto/index.js');
+    const nacl = (await import('tweetnacl')).default;
+    
+    const secretKey = fromBase64(token);
+    const derivedKeyPair = nacl.box.keyPair.fromSecretKey(secretKey);
+    const derivedPublicKeyBase64 = toBase64(derivedKeyPair.publicKey);
+    
+    console.log(`[Messages GET] Derived public key: ${derivedPublicKeyBase64.substring(0, 20)}...`);
+    
+    // Look up edge by X25519 public key
+    const [edge] = await db
+      .select({ id: edges.id, status: edges.status })
+      .from(edges)
+      .where(eq(edges.x25519PublicKey, derivedPublicKeyBase64))
+      .limit(1);
+      
+    if (edge && edge.status === 'active') {
+      authenticatedEdgeId = edge.id;
+      console.log(`[Messages GET] Edge authenticated: ${authenticatedEdgeId.slice(0, 8)}...`);
+    } else {
+      console.log(`[Messages GET] No matching edge found for public key`);
+    }
+  } catch (edgeAuthError) {
+    console.log(`[Messages GET] Edge auth error:`, edgeAuthError);
+  }
+  
+  // If edge auth failed, try JWT authentication
+  if (!authenticatedEdgeId) {
+    console.log('[Messages GET] Trying JWT authentication...');
+    try {
+      const { verifySessionToken } = await import('../lib/jwt.js');
+      const payload = await verifySessionToken(token);
+      
+      if (payload && payload.fingerprint && payload.exp && payload.exp >= Math.floor(Date.now() / 1000)) {
+        authenticatedIdentityId = payload.fingerprint;
+        console.log(`[Messages GET] JWT authenticated: ${authenticatedIdentityId.slice(0, 8)}...`);
+      }
+    } catch (jwtError) {
+      console.log(`[Messages GET] JWT auth error:`, jwtError);
+      return c.json({ code: 'UNAUTHORIZED', message: 'Invalid token' }, 401);
+    }
+  }
+  
+  if (!authenticatedEdgeId && !authenticatedIdentityId) {
+    console.log('[Messages GET] Authentication failed for both edge and JWT');
+    return c.json({ code: 'UNAUTHORIZED', message: 'Authentication failed' }, 401);
+  }
+  
+  console.log(`[Messages GET] Authentication successful, fetching message...`);
+  
+  // Fetch the message
+  const [message] = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .limit(1);
+    
+  if (!message) {
+    console.log(`[Messages GET] Message not found: ${messageId}`);
+    return c.json({ code: 'MESSAGE_NOT_FOUND', message: 'Message not found' }, 404);
+  }
+  
+  console.log(`[Messages GET] Message found, checking access...`);
+  
+  // Verify access: Check if authenticated edge/identity is a participant
+  let hasAccess = false;
+  
+  if (authenticatedEdgeId) {
+    // For edge auth: Check if edge is a participant in the conversation
+    const [participant] = await db
+      .select()
+      .from(conversationParticipants)
+      .where(and(
+        eq(conversationParticipants.conversationId, message.conversationId),
+        eq(conversationParticipants.edgeId, authenticatedEdgeId)
+      ))
+      .limit(1);
+      
+    hasAccess = !!participant;
+    console.log(`[Messages GET] Edge access check: ${hasAccess}, participant found: ${!!participant}`);
+  } else if (authenticatedIdentityId) {
+    // For JWT auth: Check if any of user's edges is a participant
+    const ownerQueryKey = computeQueryKey(authenticatedIdentityId);
+    const userEdges = await db
+      .select({ id: edges.id })
+      .from(edges)
+      .where(eq(edges.ownerQueryKey, ownerQueryKey));
+      
+    const userEdgeIds = userEdges.map(e => e.id);
+    console.log(`[Messages GET] JWT user has ${userEdgeIds.length} edges`);
+    
+    if (userEdgeIds.length > 0) {
+      const [participant] = await db
+        .select()
+        .from(conversationParticipants)
+        .where(and(
+          eq(conversationParticipants.conversationId, message.conversationId),
+          inArray(conversationParticipants.edgeId, userEdgeIds)
+        ))
+        .limit(1);
+        
+      hasAccess = !!participant;
+      console.log(`[Messages GET] JWT access check: ${hasAccess}`);
+    }
+  }
+  
+  if (!hasAccess) {
+    console.log(`[Messages GET] Access denied for message ${messageId}`);
+    return c.json({ code: 'FORBIDDEN', message: 'Access denied to this message' }, 403);
+  }
+  
+  console.log(`[Messages GET] Access granted, returning message`);
+  
+  // Return the full message
+  return c.json({
+    id: message.id,
+    conversationId: message.conversationId,
+    edgeId: message.edgeId,
+    senderEdgeId: message.edgeId,  // Derived: Sender identified by edge
+    senderExternalId: message.senderExternalId,
+    ciphertext: message.ciphertext,
+    ephemeralPubkey: message.ephemeralPubkey,
+    nonce: message.nonce,
+    ratchetPn: message.ratchetPn,
+    ratchetN: message.ratchetN,
+    encryptedContent: message.encryptedContent,
+    plaintextContent: message.plaintextContent,
+    contentType: message.contentType,
+    origin: message.origin,
+    securityLevel: message.securityLevel,
+    createdAt: message.createdAt.toISOString(),
+  });
 });
 
 export default messageRoutes;
