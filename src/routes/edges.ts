@@ -439,6 +439,56 @@ edgeRoutes.get('/', async (c) => {
 });
 
 /**
+ * GET /v1/edge/:id - Get edge details by ID (public endpoint)
+ * 
+ * Returns public edge information including X25519 public key.
+ * No authentication required - this is for resolving edges for messaging.
+ * Similar to /v1/edge/resolve but looks up by edge ID instead of type+address.
+ */
+edgeRoutes.get('/:id', async (c) => {
+  const edgeId = c.req.param('id');
+
+  const [edge] = await db
+    .select()
+    .from(edges)
+    .where(eq(edges.id, edgeId))
+    .limit(1);
+
+  if (!edge) {
+    return c.json({ 
+      code: 'EDGE_NOT_FOUND', 
+      message: 'Edge not found' 
+    }, 404);
+  }
+
+  if (edge.status !== 'active') {
+    return c.json({ 
+      code: 'EDGE_DISABLED', 
+      message: 'Edge is no longer active' 
+    }, 410);
+  }
+
+  if (!edge.x25519PublicKey) {
+    return c.json({ 
+      code: 'MISSING_ENCRYPTION_KEY', 
+      message: 'Edge missing encryption key' 
+    }, 500);
+  }
+
+  // Return ONLY public edge data - NO identity information
+  return c.json({
+    edgeId: edge.id,
+    type: edge.type,
+    address: edge.address,
+    status: edge.status,
+    securityLevel: edge.securityLevel,
+    x25519PublicKey: edge.x25519PublicKey,
+    displayName: (edge.metadata as any)?.displayName || null,
+    createdAt: edge.createdAt.toISOString(),
+  });
+});
+
+/**
  * Lookup edge by address (for email worker, public endpoint)
  * @deprecated Use POST /v1/edge/resolve instead
  */
