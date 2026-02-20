@@ -227,8 +227,8 @@ edgeRoutes.post('/', async (c) => {
     authToken?: string; // For webhook edges
   }>();
 
-  if (!body.type || !body.publicKey || !body.nonce || !body.signature) {
-    return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields' }, 400);
+  if (!body.type || !body.publicKey || !body.x25519PublicKey || !body.nonce || !body.signature) {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Missing required fields: type, publicKey, x25519PublicKey, nonce, signature' }, 400);
   }
 
   // Check if edge type exists and is enabled
@@ -328,27 +328,35 @@ edgeRoutes.post('/', async (c) => {
       break;
 
     case 'local-llm':
-      // Local LLM edges store BOTH the bridge edge ID AND their own ID in the address
-      // Format: {bridgeEdgeId}:{localEdgeId}
-      // This allows multiple local-llm edges to point to the same bridge
-      // while maintaining unique addresses (required by database constraint)
+      // Two scenarios for local-llm edges:
+      // 1. Bridge edge (desktop app) - no customAddress, just use edgeId  
+      // 2. Client edge (extension) - has customAddress pointing to bridge
       console.log('[POST /edge] local-llm edge creation:', {
         hasCustomAddress: !!body.customAddress,
         customAddress: body.customAddress?.substring(0, 10),
         edgeId: edgeId.substring(0, 10),
       });
-      if (!body.customAddress) {
-        console.log('[POST /edge] ❌ Missing customAddress for local-llm edge');
-        return c.json({ code: 'VALIDATION_ERROR', message: 'Bridge edge ID required for local-llm edges' }, 400);
+      
+      if (body.customAddress) {
+        // Client edge pointing to bridge: Format = {bridgeEdgeId}:{localEdgeId}
+        // This allows multiple local-llm edges to point to the same bridge
+        // while maintaining unique addresses (required by database constraint)
+        address = `${body.customAddress}:${edgeId}`;
+        console.log('[POST /edge] ✅ local-llm client edge address:', address.substring(0, 30) + '...');
+        // Store bridge edge ID in metadata for easy lookup
+        metadata = {
+          bridgeEdgeId: body.customAddress,
+          ...(body.encryptedMetadata ? { encrypted: body.encryptedMetadata } : {}),
+        };
+      } else {
+        // Bridge edge itself (desktop app): Just use edgeId
+        address = edgeId;
+        console.log('[POST /edge] ✅ local-llm bridge edge address:', address);
+        metadata = {
+          isBridge: true,
+          ...(body.encryptedMetadata ? { encrypted: body.encryptedMetadata } : {}),
+        };
       }
-      // Store as: bridgeEdgeId:localEdgeId
-      address = `${body.customAddress}:${edgeId}`;
-      console.log('[POST /edge] ✅ local-llm edge address set to:', address.substring(0, 30) + '...');
-      // Store bridge edge ID in metadata for easy lookup
-      metadata = {
-        bridgeEdgeId: body.customAddress,
-        ...(body.encryptedMetadata ? { encrypted: body.encryptedMetadata } : {}),
-      };
       break;
 
     default:
