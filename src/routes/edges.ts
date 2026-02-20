@@ -331,10 +331,16 @@ edgeRoutes.post('/', async (c) => {
       // Local LLM edges store the bridge's edge ID as the address
       // This is the edge ID of the desktop bridge app (passed as customAddress)
       // The client uses this to resolve the bridge's X25519 public key
+      console.log('[POST /edge] local-llm edge creation:', {
+        hasCustomAddress: !!body.customAddress,
+        customAddress: body.customAddress?.substring(0, 10),
+      });
       if (!body.customAddress) {
+        console.log('[POST /edge] ❌ Missing customAddress for local-llm edge');
         return c.json({ code: 'VALIDATION_ERROR', message: 'Bridge edge ID required for local-llm edges' }, 400);
       }
       address = body.customAddress; // Store the bridge's edge ID
+      console.log('[POST /edge] ✅ local-llm edge address set to:', address.substring(0, 10));
       metadata = body.encryptedMetadata ? { encrypted: body.encryptedMetadata } : {};
       break;
 
