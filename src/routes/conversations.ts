@@ -153,13 +153,17 @@ conversationRoutes.get('/', async (c) => {
       let counterpartyHandle = null;
       let counterpartyEdgeId = null;
       let counterpartyX25519Key = null;
+      let counterpartyLabel = null;
+      let counterpartyType = null;
       
       // Look up counterparty edge info
       if (counterpartyParticipant?.edgeId) {
         const [edgeResult] = await db
           .select({ 
             id: edges.id,
+            type: edges.type,
             address: edges.address,
+            label: edges.label,
             x25519PublicKey: edges.x25519PublicKey,
             displayName: sql<string>`${edges.metadata}->>'displayName'`,
           })
@@ -171,6 +175,8 @@ conversationRoutes.get('/', async (c) => {
           counterpartyHandle = edgeResult.address;
           counterpartyEdgeId = edgeResult.id;
           counterpartyX25519Key = edgeResult.x25519PublicKey;
+          counterpartyLabel = edgeResult.label;
+          counterpartyType = edgeResult.type;
         }
       } else if (counterpartyParticipant?.externalId && conv.origin === 'contact_link') {
         // For contact_link visitors, externalId IS their public key
@@ -205,6 +211,8 @@ conversationRoutes.get('/', async (c) => {
           handle: counterpartyHandle,
           edgeId: counterpartyEdgeId,
           x25519PublicKey: counterpartyX25519Key,
+          label: counterpartyLabel,  // For local-llm, this is the bridge's label
+          type: counterpartyType,    // Edge type (local-llm, native, etc.)
         } : null,
         lastMessageId: lastMsgInfo?.id || null,  // For preview lookup
         lastMessageWasMine,  // For filtering sent vs received notifications
