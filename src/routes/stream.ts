@@ -128,12 +128,14 @@ streamRoutes.get('/edge/:edgeId', async (c) => {
         await stream.write(`event: connected\n`);
         await stream.write(`data: {"timestamp":"${new Date().toISOString()}","edgeId":"${edgeId}"}\n\n`);
         
-        // Keepalive ping every 30 seconds
+        // Heartbeat ping every 30 seconds to detect connection issues
         keepAliveInterval = setInterval(async () => {
           try {
-            await stream.write(`: keepalive ${Date.now()}\n\n`);
+            await stream.write(`event: ping\n`);
+            await stream.write(`data: {"timestamp":${Date.now()}}\n\n`);
           } catch (error) {
             // Stream closed, cleanup will happen in finally block
+            console.log('[SSE Edge] Keepalive failed, connection likely closed');
           }
         }, 30000);
         
@@ -240,12 +242,14 @@ streamRoutes.get('/', async (c) => {
       await stream.write(`event: connected\n`);
       await stream.write(`data: {"timestamp":"${new Date().toISOString()}"}\n\n`);
       
-      // Keepalive ping every 30 seconds to prevent timeout
+      // Heartbeat ping every 30 seconds to detect connection issues
       keepAliveInterval = setInterval(async () => {
         try {
-          await stream.write(`: keepalive ${Date.now()}\n\n`);
+          await stream.write(`event: ping\n`);
+          await stream.write(`data: {"timestamp":${Date.now()}}\n\n`);
         } catch (error) {
           // Stream closed, cleanup will happen in finally block
+          console.log('[SSE] Keepalive failed, connection likely closed');
         }
       }, 30000);
       
