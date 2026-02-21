@@ -19,6 +19,7 @@ import { webhookRoutes } from './routes/webhook.js';
 import { assetsRoutes } from './routes/assets.js';
 import { linkRoutes } from './routes/link.js';
 import { streamRoutes } from './routes/stream.js';
+import { bridgeRoutes } from './routes/bridges.js';
 
 const app = new Hono();
 
@@ -70,6 +71,7 @@ api.route('/discord', discordRoutes);
 api.route('/webhook', webhookRoutes);
 api.route('/link', linkRoutes);
 api.route('/stream', streamRoutes); // Real-time SSE updates
+api.route('/bridge', bridgeRoutes); // Bridge monitoring
 
 app.route('/v1', api);
 

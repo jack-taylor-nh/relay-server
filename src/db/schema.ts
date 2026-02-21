@@ -395,6 +395,44 @@ export const visitorSessions = pgTable('visitor_sessions', {
 }));
 
 // ============================================
+// Bridge Status Events (Connection Monitoring)
+// ============================================
+
+export type BridgeStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
+
+/**
+ * Tracks connection status history for bridge edges.
+ * Used for monitoring bridge health, debugging connection issues, and analytics.
+ */
+export const bridgeStatusEvents = pgTable('bridge_status_events', {
+  /** Unique event ID (ulid) */
+  id: text('id').primaryKey(),
+  /** Bridge edge ID (references edges table) */
+  edgeId: text('edge_id').references(() => edges.id, { onDelete: 'cascade' }).notNull(),
+  /** Connection status */
+  status: text('status').notNull().$type<BridgeStatus>(),
+  /** Previous status (for tracking state transitions) */
+  previousStatus: text('previous_status').$type<BridgeStatus>(),
+  /** Timestamp of this status change */
+  timestamp: timestamp('timestamp', { withTimezone: true }).defaultNow().notNull(),
+  /** Connection duration in milliseconds (for connected -> disconnected transitions) */
+  connectionDurationMs: integer('connection_duration_ms'),
+  /** Reconnection attempt number (for reconnecting/failed states) */
+  reconnectAttempt: integer('reconnect_attempt'),
+  /** Error message if status is 'failed' or 'reconnecting' */
+  errorMessage: text('error_message'),
+  /** Additional metadata (client info, network conditions, etc.) */
+  metadata: jsonb('metadata').default({}).notNull(),
+  /** When this record was created */
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  edgeIdx: index('bridge_status_events_edge_id_idx').on(table.edgeId),
+  timestampIdx: index('bridge_status_events_timestamp_idx').on(table.timestamp),
+  statusIdx: index('bridge_status_events_status_idx').on(table.status),
+  edgeTimestampIdx: index('bridge_status_events_edge_timestamp_idx').on(table.edgeId, table.timestamp),
+}));
+
+// ============================================
 // Type exports
 // ============================================
 
@@ -420,3 +458,6 @@ export type NewConversationParticipant = typeof conversationParticipants.$inferI
 
 export type VisitorSession = typeof visitorSessions.$inferSelect;
 export type NewVisitorSession = typeof visitorSessions.$inferInsert;
+
+export type BridgeStatusEvent = typeof bridgeStatusEvents.$inferSelect;
+export type NewBridgeStatusEvent = typeof bridgeStatusEvents.$inferInsert;
