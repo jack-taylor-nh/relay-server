@@ -5,8 +5,8 @@
  * Used for monitoring bridge health, debugging connection issues, and analytics.
  */
 
-import { db } from '../db';
-import { bridgeStatusEvents, type BridgeStatus, type NewBridgeStatusEvent } from '../db/schema';
+import { db } from '../db/index.js';
+import { bridgeStatusEvents, type BridgeStatus, type NewBridgeStatusEvent } from '../db/schema.js';
 import { eq, desc, and, gte, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 
