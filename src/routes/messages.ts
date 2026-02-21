@@ -5,7 +5,7 @@
  */
 
 import { Hono } from 'hono';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, ne, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { db } from '../db/index.js';
 import { identities, edges, conversations, conversationParticipants, messages, type SecurityLevel, type EdgeType } from '../db/schema.js';
@@ -206,6 +206,21 @@ messageRoutes.post('/', async (c) => {
 
       if (!participation) {
         return c.json({ error: 'Not a participant in this conversation' }, 403);
+      }
+      
+      // 🎯 CRITICAL: Look up the OTHER participant (recipient) so we can notify them
+      const [otherParticipant] = await db
+        .select({ edgeId: conversationParticipants.edgeId })
+        .from(conversationParticipants)
+        .where(and(
+          eq(conversationParticipants.conversationId, conversationId),
+          ne(conversationParticipants.edgeId, body.edge_id)
+        ))
+        .limit(1);
+      
+      if (otherParticipant) {
+        recipientEdgeId = otherParticipant.edgeId;
+        console.log(`[Messages] Found recipient in existing conversation: ${recipientEdgeId}`);
       }
     } else if (body.recipient_handle) {
       // New native conversation - resolve recipient and create conversation
