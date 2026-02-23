@@ -84,6 +84,16 @@ export const EDGE_TYPES: EdgeTypeDefinition[] = [
     addressFormat: 'llm-{edgeId}',
     securityLevel: 'gateway_secured',
     requiresCustomAddress: false,
+    enabled: false, // Deprecated - use relay-ai instead
+  },
+  {
+    id: 'relay-ai',
+    name: 'Relay AI',
+    description: 'Anonymous edge for E2EE AI chat via Relay Network operators',
+    icon: '',
+    addressFormat: 'ai-{edgeId}',
+    securityLevel: 'e2ee',
+    requiresCustomAddress: false,
     enabled: true,
   },
   // Future edge types can be added here without client changes!
