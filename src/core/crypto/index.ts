@@ -8,6 +8,7 @@
  */
 
 import nacl from 'tweetnacl';
+import { createHmac } from 'crypto';
 import type { KeyPair, EncryptedKeyBundle } from '../types/index.js';
 
 // ============================================
@@ -253,4 +254,14 @@ export function generateId(): string {
 export function secureZero(buffer: Uint8Array): void {
   // tweetnacl doesn't have memzero, just overwrite with zeros
   buffer.fill(0);
+}
+
+/**
+ * Compute HMAC-SHA256 of data with secret key
+ * Used for identity-blind receipt keys: HMAC(fingerprint + codeId, secret)
+ */
+export function computeHmac(data: string, secret: string): string {
+  return createHmac('sha256', secret)
+    .update(data)
+    .digest('hex');
 }
