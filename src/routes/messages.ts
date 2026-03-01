@@ -745,9 +745,13 @@ messageRoutes.post('/preview', authMiddleware, async (c) => {
     // Call scrapling-worker via Railway private networking
     // Railway exposes services at: <service-name>.railway.internal
     const scraplingUrl = process.env.SCRAPLING_WORKER_URL || 'http://scrapling-worker.railway.internal:8000';
-    const workerSecret = process.env.WORKER_SECRET;
+    const workerSecret = process.env.SCRAPLING_WORKER_SECRET;
     
     console.log(`[Link Preview] Fetching preview for: ${url}`);
+    console.log(`[Link Preview] Worker secret configured: ${workerSecret ? 'YES' : 'NO'}`);
+    if (workerSecret) {
+      console.log(`[Link Preview] Worker secret length: ${workerSecret.length}`);
+    }
     
     const response = await fetch(`${scraplingUrl}/preview`, {
       method: 'POST',
