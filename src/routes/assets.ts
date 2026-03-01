@@ -169,10 +169,9 @@ assetsRoutes.post('/v1/assets/redeem', async (c) => {
     
     // Verify Ed25519 signature (sign(code + timestamp))
     const publicKeyBytes = fromBase64(body.publicKey);
-    const signatureBytes = fromBase64(body.signature);
     const message = `${body.code}:${body.timestamp}`;
     
-    const signatureValid = verifyString(message, signatureBytes, publicKeyBytes);
+    const signatureValid = verifyString(message, body.signature, publicKeyBytes);
     if (!signatureValid) {
       return c.json({ 
         code: 'SIGNATURE_INVALID', 
