@@ -688,6 +688,19 @@ messageRoutes.get('/:messageId', async (c) => {
 });
 
 /**
+ * Link preview response structure
+ */
+interface LinkPreviewResponse {
+  url: string;
+  success: boolean;
+  title?: string;
+  description?: string;
+  image?: string;
+  site_name?: string;
+  error?: string;
+}
+
+/**
  * POST /v1/messages/preview
  * Generate link preview for a URL
  * 
@@ -754,7 +767,7 @@ messageRoutes.post('/preview', authMiddleware, async (c) => {
       });
     }
     
-    const preview = await response.json();
+    const preview = await response.json() as LinkPreviewResponse;
     console.log(`[Link Preview] Success:`, preview.success);
     
     return c.json(preview);
