@@ -687,4 +687,86 @@ messageRoutes.get('/:messageId', async (c) => {
   });
 });
 
+/**
+ * POST /v1/messages/preview
+ * Generate link preview for a URL
+ * 
+ * This endpoint proxies requests to the scrapling-worker service to fetch
+ * link metadata (Open Graph tags, etc.) while preserving user privacy.
+ * The destination site only sees the server's IP, not the user's.
+ * 
+ * Request body:
+ * {
+ *   url: string
+ * }
+ * 
+ * Response:
+ * {
+ *   url: string,
+ *   success: boolean,
+ *   title?: string,
+ *   description?: string,
+ *   image?: string,
+ *   site_name?: string,
+ *   error?: string
+ * }
+ */
+messageRoutes.post('/preview', authMiddleware, async (c) => {
+  const { url } = await c.req.json();
+  
+  if (!url || typeof url !== 'string') {
+    return c.json({ code: 'INVALID_REQUEST', message: 'Missing or invalid URL' }, 400);
+  }
+  
+  // Validate URL format
+  try {
+    const urlObj = new URL(url);
+    if (!['http:', 'https:'].includes(urlObj.protocol)) {
+      return c.json({ code: 'INVALID_REQUEST', message: 'URL must be http or https' }, 400);
+    }
+  } catch (error) {
+    return c.json({ code: 'INVALID_REQUEST', message: 'Invalid URL format' }, 400);
+  }
+  
+  try {
+    // Call scrapling-worker via Railway private networking
+    // Railway exposes services at: <service-name>.railway.internal
+    const scraplingUrl = process.env.SCRAPLING_WORKER_URL || 'http://scrapling-worker.railway.internal:8000';
+    const workerSecret = process.env.WORKER_SECRET;
+    
+    console.log(`[Link Preview] Fetching preview for: ${url}`);
+    
+    const response = await fetch(`${scraplingUrl}/preview`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(workerSecret && { 'X-Worker-Secret': workerSecret }),
+      },
+      body: JSON.stringify({ url, timeout: 10 }),
+    });
+    
+    if (!response.ok) {
+      console.error(`[Link Preview] Scrapling-worker returned ${response.status}`);
+      return c.json({
+        url,
+        success: false,
+        error: 'Failed to fetch preview',
+      });
+    }
+    
+    const preview = await response.json();
+    console.log(`[Link Preview] Success:`, preview.success);
+    
+    return c.json(preview);
+    
+  } catch (error) {
+    console.error('[Link Preview] Error:', error);
+    return c.json({
+      url,
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to generate preview',
+    });
+  }
+});
+
 export default messageRoutes;
