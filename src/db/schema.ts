@@ -527,3 +527,63 @@ export type NewRedemptionCode = typeof redemptionCodes.$inferInsert;
 
 export type RedemptionReceipt = typeof redemptionReceipts.$inferSelect;
 export type NewRedemptionReceipt = typeof redemptionReceipts.$inferInsert;
+
+// ============================================
+// Files (Encrypted File Storage)
+// ============================================
+
+export type FileStatus = 'uploading' | 'active' | 'deleted';
+export type FileMimeType = 
+  | 'image/jpeg'
+  | 'image/png'
+  | 'image/gif'
+  | 'image/webp'
+  | 'application/pdf'
+  | 'text/plain'
+  | 'application/octet-stream'; // Generic encrypted file
+
+/**
+ * Encrypted file metadata
+ * Files are stored encrypted in R2, server only sees ciphertext
+ */
+export const files = pgTable('files', {
+  /** Unique file ID (ulid) */
+  id: text('id').primaryKey(),
+  /** Conversation this file belongs to */
+  conversationId: text('conversation_id').references(() => conversations.id).notNull(),
+  /** Message this file is attached to (optional, for linking) */
+  messageId: text('message_id').references(() => messages.id),
+  /** Uploader's edge ID (for auth/ownership) */
+  uploaderEdgeId: text('uploader_edge_id').references(() => edges.id),
+  /** Uploader's query key (HMAC of identity) for zero-knowledge ownership */
+  uploaderQueryKey: text('uploader_query_key'),
+  /** Original filename (encrypted metadata) */
+  encryptedFilename: text('encrypted_filename'),
+  /** MIME type of decrypted file */
+  mimeType: text('mime_type').notNull().$type<FileMimeType>().default('application/octet-stream'),
+  /** File size in bytes (encrypted) */
+  sizeBytes: integer('size_bytes').notNull(),
+  /** R2 storage key (path in bucket) */
+  storageKey: text('storage_key').notNull(),
+  /** R2 bucket name */
+  storageBucket: text('storage_bucket').notNull().default('relay-files'),
+  /** CDN URL for direct download (when available) */
+  cdnUrl: text('cdn_url'),
+  /** File status */
+  status: text('status').notNull().$type<FileStatus>().default('active'),
+  /** When file was uploaded */
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  /** When file was marked deleted (soft delete) */
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  /** Expiration time (optional, for temporary files) */
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+}, (table) => ({
+  conversationIdx: index('files_conversation_idx').on(table.conversationId),
+  messageIdx: index('files_message_idx').on(table.messageId),
+  uploaderQueryKeyIdx: index('files_uploader_query_key_idx').on(table.uploaderQueryKey),
+  statusIdx: index('files_status_idx').on(table.status),
+  storageKeyIdx: uniqueIndex('files_storage_key_idx').on(table.storageKey),
+}));
+
+export type File = typeof files.$inferSelect;
+export type NewFile = typeof files.$inferInsert;

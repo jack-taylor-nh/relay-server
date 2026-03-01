@@ -20,6 +20,7 @@ import { assetsRoutes } from './routes/assets.js';
 import { linkRoutes } from './routes/link.js';
 import { streamRoutes } from './routes/stream.js';
 import { bridgeRoutes } from './routes/bridges.js';
+import { fileRoutes } from './routes/files.js';
 
 const app = new Hono();
 
@@ -72,6 +73,7 @@ api.route('/webhook', webhookRoutes);
 api.route('/link', linkRoutes);
 api.route('/stream', streamRoutes); // Real-time SSE updates
 api.route('/bridge', bridgeRoutes); // Bridge monitoring
+api.route('/files', fileRoutes); // Encrypted file storage (R2)
 
 app.route('/v1', api);
 
