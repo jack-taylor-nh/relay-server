@@ -698,6 +698,15 @@ interface LinkPreviewResponse {
   image?: string;
   site_name?: string;
   error?: string;
+  security?: {
+    level: 'safe' | 'warning' | 'danger' | 'unknown';
+    score: number;
+    warnings: string[];
+    safe_browsing?: {
+      status: string;
+      checked: boolean;
+    };
+  };
 }
 
 /**
