@@ -78,18 +78,18 @@ export const EDGE_TYPES: EdgeTypeDefinition[] = [
   },
   {
     id: 'local-llm',
-    name: 'Local LLM',
-    description: 'Connect to your local LLM (Ollama, LM Studio) via Relay bridge app',
+    name: 'Local LLM (Deprecated)',
+    description: 'Legacy: Connect to local LLM via bridge. Use relay-ai with OpenRouter instead.',
     icon: '',
     addressFormat: 'llm-{edgeId}',
     securityLevel: 'gateway_secured',
     requiresCustomAddress: false,
-    enabled: false, // Deprecated - use relay-ai instead
+    enabled: false,
   },
   {
     id: 'relay-ai',
     name: 'Relay AI',
-    description: 'Anonymous edge for E2EE AI chat via Relay Network operators',
+    description: 'AI chat via OpenRouter (RelayAI or BYOK). ZDR endpoints for privacy.',
     icon: '',
     addressFormat: 'ai-{edgeId}',
     securityLevel: 'e2ee',
